@@ -257,16 +257,17 @@ if df_clienti is not None and df_flotta is not None:
         st.error("🚨 Clienti NON ASSEGNATI - Nessuna risorsa disponibile o turno non coperto!")
         st.dataframe(non_assegnati[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Tipo Veicolo Richiesto', 'Stato Assegnazione']])
 
-  # ... (TUTTO IL CODICE PRECEDENTE DI MATCHING E RISORSE RESTA INVARIATO) ...
+  # === DEVI AGGIUNGERE LA FUNZIONE QUI SOPRA ===
+def redirect_to_storico():
+    st.switch_page("pages/1_Storico.py")
 
-    # === PUNTO DI INSERIMENTO (DOPO I CALCOLI E PRIMA DELLA FINE DEL BLOCCO IF) ===
-    # SALVA I DATI NELLA SESSIONE PER POTERLI USARE NELLA PAGINA DI VISUALIZZAZIONE
-    st.session_state['assegnazioni_complete'] = assegnazioni_df
-    st.session_state['flotta_risorse'] = df_risorse
-    
-    # MOSTRA UN MESSAGGIO AMICHEVOLE E REINDIRIZZA
-    st.success("🎉 File processati! Clicca 'Visualizza Schedulazione' o attendi il reindirizzamento...")
-    st.button("Visualizza Schedulazione Dettagliata", on_click=lambda: st.switch_page("pages/1_Storico.py"))
+# ... (il codice precedente che imposta i session state) ...
+
+# MOSTRA UN MESSAGGIO AMICHEVOLE E REINDIRIZZA
+st.success("🎉 File processati! Clicca 'Visualizza Schedulazione' o attendi il reindirizzamento...")
+
+# === MODIFICA IL PULSANTE PER CHIAMARE LA FUNZIONE, NON LA LAMBDA ===
+st.button("Visualizza Schedulazione Dettagliata", on_click=redirect_to_storico)
     
     # Reindirizzamento automatico dopo il caricamento
     # st.experimental_rerun() # Disattivato per consentire il click manuale se preferisci
