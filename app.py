@@ -58,6 +58,7 @@ if uploaded_clients and uploaded_flotta:
     
     # Crea una COPIA della flotta per tracciare la disponibilità (essenziale!)
     df_risorse = df_flotta.copy()
+    df_risorse['Stato Attuale'] = 'Libero'
 
     # Converti gli orari in formato gestibile
     # Assumiamo che l'Ora Arrivo in clienti.xlsx sia solo l'ora (es. time(10, 0))
