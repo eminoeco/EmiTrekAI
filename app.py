@@ -320,10 +320,11 @@ else:
     st.info("Nessun cliente assegnato. La tabella è vuota.")
 
 st.markdown("---") 
-# ... (Il resto del codice - RICERCA E STORICO - rimane invariato) ...
-    # --- RICERCA E STORICO INTERATTIVO (Mantenuto) ---
-    st.markdown("## 🔎 Ricerca e Storico Servizi")
-    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
+# --- RICERCA E STORICO INTERATTIVO (Mantenuto) ---
+st.markdown("## 🔎 Ricerca e Storico Servizi")
+git add app.py
+git commit -m "Fix IndentationError: Corretta la sovra-indentazione della sezione Ricerca"
+git push origin main    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
     with tab1:
         st.subheader("🔍 Dettagli Servizio per Cliente")
