@@ -137,7 +137,7 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
-    st.experimental_rerun() # Forza il refresh per mostrare i risultati
+    st.rerun() # Forza il refresh per mostrare i risultati
 
 
 # --- LAYOUT PRINCIPALE ---
