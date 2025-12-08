@@ -129,7 +129,7 @@ if df_clienti is not None and df_flotta is not None:
         # Seleziona la risorsa che minimizza il Ritardo (ossia è libera prima)
         risorsa_assegnata = candidati_validi.sort_values(by='Ritardo Min').iloc[0]
         
-        ritardo_minuti = risorsa_assegnata['Ritardo Min']
+        ritardo_minuti = int(risorsa_assegnata['Ritardo Min'])
         
         # 2.3 CALCOLA ORA EFFETTIVA E ORA FINE
         
