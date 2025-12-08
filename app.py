@@ -259,7 +259,8 @@ if df_clienti is not None and df_flotta is not None:
 
   # === DEVI AGGIUNGERE LA FUNZIONE QUI SOPRA ===
 def redirect_to_storico():
-    st.switch_page("1_Storico") # <--- DEVE ESSERE SOLO IL NOME BASE DEL FILE
+
+    st.switch_page("storico")
 
 # ... (il codice precedente che imposta i session state) ...
 
