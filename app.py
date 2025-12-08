@@ -75,6 +75,9 @@ if df_clienti is not None and df_flotta is not None:
     # Dati Flotta (Risorse Dinamiche)
     df_risorse = df_flotta.copy()
     
+    # FIX: Aggiunge la colonna di stato che manca nel file Excel, ma serve alla logica
+    df_risorse['Prossima Disponibilità'] = df_risorse['Disponibile Da (hh:mm)']
+    
     # Inizializza lo stato dinamico della risorsa (Logica)
     def to_time(val):
         if isinstance(val, datetime): return val.time()
@@ -112,7 +115,8 @@ if df_clienti is not None and df_flotta is not None:
         # Filtra i candidati per tipo di veicolo corretto E che non superino il loro turno (Disponibile Fino)
         candidati_validi = df_risorse[
             (df_risorse['Tipo Veicolo'] == veicolo_richiesto) & 
-            (df_risorse['Disponibile Fino (hh:mm)'] >= ora_richiesta) # Devono essere disponibili almeno all'ora richiesta
+            # I candidati devono finire il turno dopo l'ora richiesta (per evitare assegnazioni tardive non gestibili)
+            (df_risorse['Disponibile Fino (hh:mm)'].apply(time_to_minutes) >= time_to_minutes(ora_richiesta)) 
         ].copy() # Copia per lavorare senza SettingWithCopyWarning
         
         if candidati_validi.empty:
@@ -129,7 +133,8 @@ if df_clienti is not None and df_flotta is not None:
         # Seleziona la risorsa che minimizza il Ritardo (ossia è libera prima)
         risorsa_assegnata = candidati_validi.sort_values(by='Ritardo Min').iloc[0]
         
-        ritardo_minuti = int(risorsa_assegnata['Ritardo Min'])
+        # FIX: Conversione esplicita a int per timedelta
+        ritardo_minuti = int(risorsa_assegnata['Ritardo Min']) 
         
         # 2.3 CALCOLA ORA EFFETTIVA E ORA FINE
         
@@ -155,12 +160,13 @@ if df_clienti is not None and df_flotta is not None:
         assegnazioni_df.loc[index, 'Stato Assegnazione'] = 'ASSEGNATO'
         assegnazioni_df.loc[index, 'Ora Effettiva Prelievo'] = ora_effettiva_prelievo
         assegnazioni_df.loc[index, 'Ritardo Prelievo (min)'] = ritardo_minuti
+        assegnazioni_df.loc[index, 'Tempo Servizio Totale (Minuti)'] = tempo_servizio_totale # Assicura che la colonna sia presente
         
         # AGGIORNA la prossima disponibilità della risorsa
         df_risorse.loc[df_risorse['ID Veicolo'] == risorsa_assegnata['ID Veicolo'], 'Prossima Disponibilità'] = ora_fine_servizio
 
 
-    # 3. MOSTRA I RISULTATI
+    # 3. MOSTRA I RISULTATI PRINCIPALI
     
     st.subheader("Riepilogo Assegnazioni e Ritardi")
     st.dataframe(
@@ -187,3 +193,50 @@ if df_clienti is not None and df_flotta is not None:
             'Prossima Disponibilità'
         ]].sort_values(by='Prossima Disponibilità')
     )
+    
+    st.markdown("---")
+    
+    # 4. NUOVA SEZIONE: Dettaglio Schedulazione per Autista
+    st.header("4. Dettaglio Sequenza di Servizi per Autista")
+
+    # 4.1 Crea la lista degli autisti assegnati che hanno almeno un servizio
+    assigned_drivers = assegnazioni_df['Autista Assegnato'].dropna().unique().tolist()
+
+    if assigned_drivers:
+        # 4.2 Permetti la selezione dell'autista
+        selected_driver = st.selectbox(
+            "Seleziona un Autista per vedere la sua sequenza di servizi:",
+            assigned_drivers
+        )
+        
+        # 4.3 Filtra gli assegnazioni per l'autista selezionato
+        driver_assignments = assegnazioni_df[
+            (assegnazioni_df['Autista Assegnato'] == selected_driver) &
+            (assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO')
+        ].sort_values(by='Ora Effettiva Prelievo').reset_index(drop=True)
+
+        if not driver_assignments.empty:
+            st.subheader(f"Viaggi Assegnati a {selected_driver}")
+            
+            # Aggiungi la colonna Ora Fine Servizio per chiarezza nel dettaglio
+            def calculate_end_time(row):
+                start_dt = datetime.combine(datetime.today(), row['Ora Effettiva Prelievo'])
+                end_dt = start_dt + timedelta(minutes=int(row['Tempo Servizio Totale (Minuti)']))
+                return end_dt.time()
+
+            driver_assignments['Ora Fine Servizio'] = driver_assignments.apply(calculate_end_time, axis=1)
+
+            st.dataframe(
+                driver_assignments[[
+                    'ID Prenotazione',
+                    'Ora Prelievo Richiesta',
+                    'Ora Effettiva Prelievo',
+                    'Ora Fine Servizio',
+                    'Ritardo Prelievo (min)',
+                    'Destinazione Finale',
+                    'Tempo Servizio Totale (Minuti)'
+                ]]
+            )
+        
+    else:
+        st.info("Nessun autista ha ricevuto assegnazioni in questo turno.")
