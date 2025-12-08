@@ -127,6 +127,24 @@ def run_scheduling(df_clienti, df_flotta):
 # --- LAYOUT PRINCIPALE ---
 
 if not st.session_state['processed_data']:
+    # --- LOGICA DI SALVATAGGIO DEI DATI CARICATI ---
+# Funzione chiamata quando l'utente clicca il pulsante
+def start_optimization(df_clienti, df_flotta):
+    # Salviamo i dati letti nello stato in modo che non si perdano al refresh
+    st.session_state['temp_df_clienti'] = df_clienti
+    st.session_state['temp_df_flotta'] = df_flotta
+    
+    # Eseguiamo la schedulazione passando i dati dallo stato temporaneo
+    run_scheduling(st.session_state['temp_df_clienti'], st.session_state['temp_df_flotta'])
+    
+    # Pulizia (opzionale)
+    if 'temp_df_clienti' in st.session_state: del st.session_state['temp_df_clienti']
+    if 'temp_df_flotta' in st.session_state: del st.session_state['temp_df_flotta']
+
+
+# --- LAYOUT PRINCIPALE ---
+
+if not st.session_state['processed_data']:
     # === MOSTRA INTERFACCIA DI CARICAMENTO ===
     st.title("EmiTrekAI: Virtual Operations Manager")
     st.markdown("### Carica i file per ottimizzare la flotta.")
@@ -135,24 +153,34 @@ if not st.session_state['processed_data']:
     col1, col2 = st.columns(2)
     uploaded_clients = None
     uploaded_flotta = None
+    
+    # Variabili per tenere i dati letti in questo ciclo
+    read_df_clienti = None
+    read_df_flotta = None
 
     with col1:
         st.header("1. Clienti in Arrivo (Richieste)")
         uploaded_clients = st.file_uploader("Carica il file Prenotazioni Clienti (lista clienti)", type=['xlsx', 'csv'], key='clients_uploader')
+        if uploaded_clients:
+            read_df_clienti = read_excel_file(uploaded_clients)
+            
     with col2:
         st.header("2. La mia flotta NCC (Risorse)")
         uploaded_flotta = st.file_uploader("Carica il file Flotta Personale (flotta ncc)", type=['xlsx', 'csv'], key='flotta_uploader')
+        if uploaded_flotta:
+            read_df_flotta = read_excel_file(uploaded_flotta)
 
-    if uploaded_clients and uploaded_flotta:
-        df_clienti = read_excel_file(uploaded_clients)
-        df_flotta = read_excel_file(uploaded_flotta)
-        if df_clienti is not None and df_flotta is not None:
-            # Pulsante per avviare il calcolo in modo controllato
-            st.button("Avvia Ottimizzazione e Visualizza Dashboard", key="run_btn", 
-                      on_click=lambda: run_scheduling(df_clienti, df_flotta))
-            
+    if read_df_clienti is not None and read_df_flotta is not None:
+        st.success("File caricati con successo!")
+        # Pulsante per avviare il calcolo
+        st.button("Avvia Ottimizzazione e Visualizza Dashboard", key="run_btn", 
+                  on_click=lambda: start_optimization(read_df_clienti, read_df_flotta))
+        
 else:
     # === MOSTRA DASHBOARD INTERATTIVA (DOPO IL CARICAMENTO) ===
+    # Il resto del codice della dashboard interattiva e colorata
+    # ... (Il codice che mostra la dashboard da riga 250 in poi DEVE RESTARE INCOLLATO QUI) ...
+    
     assegnazioni_df = st.session_state['assegnazioni_complete']
     df_risorse = st.session_state['flotta_risorse']
 
@@ -160,82 +188,16 @@ else:
     st.markdown("### La tua flotta sta lavorando in modo intelligente!")
     st.markdown("---")
 
+    # 1. STATO FLOTTA (CON COLORI)
+    # ... (Resto del codice della dashboard e delle tabs) ...
+    
     # 1. STATO FLOTTA (CON COLORI PER AUTISTA)
     st.markdown("### 🚦 Stato di Disponibilità della Flotta (Colori Autista)")
     
-    def highlight_driver_color(row):
-        # Usa il nome dell'autista per determinare il colore
-        driver_name = row['Autista']
-        color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
-        # Applica il colore allo sfondo dell'autista e del veicolo
-        return [f'background-color: {color}; color: white; font-weight: bold;' if col == 'Autista' or col == 'Tipo Veicolo' else '' for col in row.index]
-
-    st.dataframe(
-        df_risorse[['ID Veicolo', 'Autista', 'Tipo Veicolo', 'Prossima Disponibilità']]
-        .sort_values(by='Prossima Disponibilità')
-        .style.apply(highlight_driver_color, axis=1)
-    )
-
-    st.markdown("---")
-
-    # 2. SEQUENZA OPERATIVA DETTAGLIATA (CON EXPANDER E COLORI AUTISTA)
-    st.markdown("## 🗓️ Sequenza Operativa Dettagliata per Autista")
-    assigned_drivers = assegnazioni_df['Autista Assegnato'].dropna().unique().tolist()
-
-    if assigned_drivers:
-        for driver in assigned_drivers:
-            driver_assignments = assegnazioni_df[
-                (assegnazioni_df['Autista Assegnato'] == driver) &
-                (assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO')
-            ].sort_values(by='Ora Effettiva Prelievo').reset_index(drop=True)
-            
-            if not driver_assignments.empty:
-                vehicle_type = driver_assignments['Tipo Veicolo Richiesto'].iloc[0]
-                # Usa il colore specifico dell'autista
-                driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
-                
-                driver_assignments['Ora Fine Servizio'] = driver_assignments.apply(calculate_end_time, axis=1)
-
-                with st.expander(f"🚗 **{driver}** ({driver_assignments.shape[0]} servizi) - [Tipo: {vehicle_type}]", expanded=False):
-                    st.markdown(f"#### Clienti in Sequenza - Autista **{driver}**")
-                    st.dataframe(
-                        driver_assignments[[
-                            'ID Prenotazione', 'Ora Effettiva Prelievo', 'Ora Fine Servizio', 
-                            'Ritardo Prelievo (min)', 'Destinazione Finale', 'Tempo Servizio Totale (Minuti)'
-                        ]]
-                        # Evidenzia la riga con il colore specifico dell'autista
-                        .style.set_properties(**{'background-color': driver_color, 'color': 'white'}, subset=['ID Prenotazione'])
-                    )
-    
-    st.markdown("---")
+    # ... (omissis, tutto il codice della dashboard finale) ...
     
     # 3. RICERCA E STORICO INTERATTIVO
-    st.markdown("## 🔎 Ricerca e Storico Interattivo")
-    tab1, tab2 = st.tabs(["Ricerca per Cliente (ID)", "Ricerca per Autista (Nome)"])
-    
-    with tab1:
-        st.subheader("🔍 Dettagli per Cliente Assegnato")
-        client_id_list = [''] + assegnazioni_df['ID Prenotazione'].unique().tolist()
-        selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
-        
-        if selected_client_id:
-            client_details = assegnazioni_df[assegnazioni_df['ID Prenotazione'] == selected_client_id]
-            st.dataframe(
-                client_details[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                                'Ritardo Prelievo (min)', 'Autista Assegnato', 'Tipo Veicolo Richiesto', 'Stato Assegnazione']]
-            )
-
-    with tab2:
-        st.subheader("👤 Storico Autista (Tutti i Servizi)")
-        driver_list = [''] + assigned_drivers
-        selected_driver_name = st.selectbox("Seleziona l'Autista da ricercare:", driver_list)
-        
-        if selected_driver_name:
-            driver_history = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == selected_driver_name]
-            st.dataframe(
-                driver_history[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                                'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione']]
-            )
+    # ... (omissis, tutto il codice della dashboard finale) ...
 
     # Pulsante per resettare e tornare al caricamento file
     st.markdown("---")
