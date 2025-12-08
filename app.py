@@ -322,12 +322,13 @@ else:
 st.markdown("---") 
 # --- RICERCA E STORICO INTERATTIVO (Mantenuto) ---
 st.markdown("## 🔎 Ricerca e Storico Servizi")
-git add app.py
-git commit -m "Fix IndentationError: Corretta la sovra-indentazione della sezione Ricerca"
-git push origin main    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
-    
-    with tab1:
-        st.subheader("🔍 Dettagli Servizio per Cliente")
+
+tab1, tab2 = st.tabs(["🔍 Dettagli Cliente", "👤 Storico Autista"])
+
+assigned_drivers = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO']['Autista Assegnato'].unique().tolist()
+
+with tab1:
+     st.subheader("🔍 Dettagli Servizio per Cliente")
         client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
         selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
         
