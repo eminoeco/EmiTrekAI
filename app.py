@@ -1,22 +1,10 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, time, timedelta
-import numpy as np 
+import numpy as np
 
 # --- CONFIGURAZIONE GENERALE ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI: VOM", page_icon="🗓️")
-# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO ---
-st.markdown(
-    """
-    <style>
-    .stApp {
-        background-color: #F0F8FF; /* Alice Blue */
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-# --------------------------------------------------
 
 # Inizializza lo stato
 if 'processed_data' not in st.session_state:
@@ -24,14 +12,53 @@ if 'processed_data' not in st.session_state:
     st.session_state['assegnazioni_complete'] = None
     st.session_state['flotta_risorse'] = None
 
-# --- MAPPATURA COLORI (SU RICHIESTA ESPRESSA) ---
-# Ogni operatore NCC ha un colore fisso che lo identifica.
+# --- MAPPATURA COLORI E EMOJI (Amichevole) ---
 DRIVER_COLORS = {
-    'Andrea': '#2ecc71', # Verde Smeraldo per Andrea
-    'Carlo': '#3498db',  # Blu per Carlo
-    'Giulia': '#f39c12', # Arancione per Giulia
-    'DEFAULT': '#95a5a6' # Grigio per Autisti non mappati
+    'Andrea': '#4CAF50', # Verde più caldo
+    'Carlo': '#2196F3',  # Blu più morbido
+    'Giulia': '#FFC107', # Giallo-Arancio professionale
+    'DEFAULT': '#B0BEC5' # Grigio chiaro
 }
+
+VEHICLE_EMOJIS = {
+    'Berlina': '🚗',
+    'Minivan': '🚐',
+    'Suv': '🚙', 
+    'Default': '❓'
+}
+
+STATUS_EMOJIS = {
+    'ASSEGNATO': '✅',
+    'NON ASSEGNATO': '❌'
+}
+
+# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO (FIX: CSS DEVE ANDARE QUI) ---
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #F0F8FF; /* Alice Blue - Azzurrino Chiaro */
+    }
+    .big-font {
+        font-size:20px !important;
+        font-weight: bold;
+    }
+    .emoji-status {
+        font-size:24px !important;
+        vertical-align: middle;
+        margin-right: 5px;
+    }
+    .driver-card {
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
+        margin-bottom: 15px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+# -----------------------------------------------------------------------------
 
 # --- FUNZIONI DI SUPPORTO ---
 def read_excel_file(uploaded_file):
@@ -70,18 +97,14 @@ def calculate_end_time(row):
 
 # --- LOGICA DI SALVATAGGIO DEI DATI CARICATI (Chiamata dal pulsante) ---
 def start_optimization(df_clienti, df_flotta):
-    # Salviamo i dati letti nello stato per la funzione run_scheduling
     st.session_state['temp_df_clienti'] = df_clienti
     st.session_state['temp_df_flotta'] = df_flotta
-    
-    # Eseguiamo la schedulazione
     run_scheduling(st.session_state['temp_df_clienti'], st.session_state['temp_df_flotta'])
 
 
 # --- LOGICA DI SCHEDULAZIONE (CORE) ---
 def run_scheduling(df_clienti, df_flotta):
     
-    # Prepara i DataFrame per l'algoritmo
     assegnazioni_df = df_clienti.copy()
     assegnazioni_df['ID Veicolo Assegnato'] = np.nan
     assegnazioni_df['Autista Assegnato'] = np.nan
@@ -91,7 +114,6 @@ def run_scheduling(df_clienti, df_flotta):
     
     df_risorse = df_flotta.copy()
     
-    # Inizializza stato dinamico della risorsa
     df_risorse['Prossima Disponibilità'] = df_risorse['Disponibile Da (hh:mm)'].apply(to_time)
     df_risorse['Disponibile Fino (hh:mm)'] = df_risorse['Disponibile Fino (hh:mm)'].apply(to_time)
     df_risorse['Tipo Veicolo'] = df_risorse['Tipo Veicolo'].astype(str).str.capitalize()
@@ -149,7 +171,9 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
-    
+    # Rimosso st.rerun() per evitare il warning
+    # L'aggiornamento avverrà tramite la logica del pulsante
+    st.experimental_rerun()
 
 
 # --- LAYOUT PRINCIPALE ---
@@ -164,7 +188,6 @@ if not st.session_state['processed_data']:
     uploaded_clients = None
     uploaded_flotta = None
     
-    # Variabili per tenere i dati letti in questo ciclo (locali)
     read_df_clienti = None
     read_df_flotta = None
 
@@ -181,37 +204,92 @@ if not st.session_state['processed_data']:
             read_df_flotta = read_excel_file(uploaded_flotta)
 
     if read_df_clienti is not None and read_df_flotta is not None:
-        st.success("File caricati con successo!")
-        # Pulsante per avviare il calcolo in modo controllato
+        st.success("File caricati con successo! Clicca il pulsante per avviare l'ottimizzazione.")
         st.button("Avvia Ottimizzazione e Visualizza Dashboard", key="run_btn", 
                   on_click=lambda: start_optimization(read_df_clienti, read_df_flotta))
-        
+
 else:
     # === MOSTRA DASHBOARD INTERATTIVA (DOPO IL CARICAMENTO) ===
     assegnazioni_df = st.session_state['assegnazioni_complete']
     df_risorse = st.session_state['flotta_risorse']
 
-    st.markdown("## 🤩 Risultati di Ottimizzazione EmiTrekAI", unsafe_allow_html=True)
-    st.markdown("### La tua flotta sta lavorando in modo intelligente!")
+    st.markdown("## ✨ La Tua Flotta Sotto Controllo ✨", unsafe_allow_html=True)
+    st.markdown("### Riepilogo Intuitivo: **Clienti & Operatori**")
     st.markdown("---")
 
-    # 1. STATO FLOTTA (CON COLORI PER AUTISTA)
-    st.markdown("### 🚦 Stato di Disponibilità della Flotta (Colori Autista)")
+    # --- NUOVA SEZIONE: RIEPILOGO A COLPO D'OCCHIO ---
+    total_clients = assegnazioni_df.shape[0]
+    assigned_clients = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].shape[0]
+    unassigned_clients = total_clients - assigned_clients
+    total_drivers = df_risorse['Autista'].nunique()
     
-    def highlight_driver_color(row):
-        driver_name = row['Autista']
-        color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
-        return [f'background-color: {color}; color: white; font-weight: bold;' if col == 'Autista' or col == 'Tipo Veicolo' else '' for col in row.index]
+    st.subheader("👀 Panoramica Rapida")
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    
+    with col_kpi1:
+        st.markdown(f"<p class='big-font'>Clienti Totali: {total_clients}</p>", unsafe_allow_html=True)
+    with col_kpi2:
+        st.markdown(f"<p class='big-font'>Clienti Assegnati: <span style='color:green'>{assigned_clients} ✅</span></p>", unsafe_allow_html=True)
+    with col_kpi3:
+        st.markdown(f"<p class='big-font'>Clienti Non Assegnati: <span style='color:red'>{unassigned_clients} ❌</span></p>", unsafe_allow_html=True)
+    with col_kpi4:
+        st.markdown(f"<p class='big-font'>Autisti in Flotta: {total_drivers} 🧑‍✈️</p>", unsafe_allow_html=True)
+    
+    st.markdown("---")
 
-    st.dataframe(
-        df_risorse[['ID Veicolo', 'Autista', 'Tipo Veicolo', 'Prossima Disponibilità']]
-        .sort_values(by='Prossima Disponibilità')
-        .style.apply(highlight_driver_color, axis=1)
-    )
+    # --- Riepilogo Clienti Assegnati e Non Assegnati con dettagli semplificati ---
+    st.subheader("Dettaglio Clienti")
+    col_clienti_assegnati, col_clienti_non_assegnati = st.columns(2)
+
+    with col_clienti_assegnati:
+        st.markdown("#### Clienti Assegnati ✅")
+        assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO']
+        if not assigned_df.empty:
+            for idx, row in assigned_df.head(5).iterrows():
+                st.info(f"**{row['ID Prenotazione']}** alle {row['Ora Effettiva Prelievo'].strftime('%H:%M')} "
+                        f"con {row['Autista Assegnato']} {VEHICLE_EMOJIS.get(row['Tipo Veicolo Richiesto'], VEHICLE_EMOJIS['Default'])}")
+        else:
+            st.info("Nessun cliente assegnato al momento.")
+
+    with col_clienti_non_assegnati:
+        st.markdown("#### Clienti Non Assegnati ❌")
+        unassigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'NON ASSEGNATO']
+        if not unassigned_df.empty:
+            for idx, row in unassigned_df.head(5).iterrows():
+                st.warning(f"**{row['ID Prenotazione']}** richiesta {row['Ora Prelievo Richiesta'].strftime('%H:%M')} "
+                           f"{VEHICLE_EMOJIS.get(row['Tipo Veicolo Richiesto'], VEHICLE_EMOJIS['Default'])}")
+        else:
+            st.success("Tutti i clienti sono stati assegnati!")
+    
+    st.markdown("---")
+
+    # --- Sezione Operatori/Autisti con Schede Colorate e Emoji ---
+    st.subheader("🧑‍✈️ I Nostri Operatori NCC")
+    
+    # Prepara il numero di colonne dinamicamente
+    drivers_unique = df_risorse['Autista'].unique()
+    drivers_overview_cols = st.columns(len(drivers_unique)) 
+    
+    for i, driver in enumerate(drivers_unique):
+        with drivers_overview_cols[i]:
+            driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
+            driver_info = df_risorse[df_risorse['Autista'] == driver].iloc[0]
+            vehicle_emoji = VEHICLE_EMOJIS.get(driver_info['Tipo Veicolo'], VEHICLE_EMOJIS['Default'])
+            
+            num_servizi = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == driver].shape[0]
+
+            st.markdown(f"""
+            <div class="driver-card" style="background-color: {driver_color}; color: white;">
+                <p class='big-font'>{driver} {vehicle_emoji}</p>
+                <p>Veicolo: {driver_info['Tipo Veicolo']}</p>
+                <p>Disponibile da: {driver_info['Prossima Disponibilità'].strftime('%H:%M')}</p>
+                <p>Servizi Assegnati: {num_servizi}</p>
+            </div>
+            """, unsafe_allow_html=True)
 
     st.markdown("---")
 
-    # 2. SEQUENZA OPERATIVA DETTAGLIATA (CON EXPANDER E COLORI AUTISTA)
+    # --- SEQUENZA OPERATIVA DETTAGLIATA ---
     st.markdown("## 🗓️ Sequenza Operativa Dettagliata per Autista")
     assigned_drivers = assegnazioni_df['Autista Assegnato'].dropna().unique().tolist()
 
@@ -225,46 +303,65 @@ else:
             if not driver_assignments.empty:
                 vehicle_type = driver_assignments['Tipo Veicolo Richiesto'].iloc[0]
                 driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
+                vehicle_emoji = VEHICLE_EMOJIS.get(vehicle_type, VEHICLE_EMOJIS['Default'])
                 
                 driver_assignments['Ora Fine Servizio'] = driver_assignments.apply(calculate_end_time, axis=1)
 
-                with st.expander(f"🚗 **{driver}** ({driver_assignments.shape[0]} servizi) - [Tipo: {vehicle_type}]", expanded=False):
-                    st.markdown(f"#### Clienti in Sequenza - Autista **{driver}**")
+                with st.expander(f"🚗 **{driver}** ({driver_assignments.shape[0]} servizi) - [Tipo: {vehicle_type} {vehicle_emoji}]", expanded=False):
+                    st.markdown(f"#### Dettagli Operativi per **{driver}**")
                     st.dataframe(
-                        driver_assignments[['ID Prenotazione', 'Ora Effettiva Prelievo', 'Ora Fine Servizio', 
-                                            'Ritardo Prelievo (min)', 'Destinazione Finale', 'Tempo Servizio Totale (Minuti)']]
-                        .style.set_properties(**{'background-color': driver_color, 'color': 'white'}, subset=['ID Prenotazione'])
+                        driver_assignments[[
+                            'ID Prenotazione', 'Ora Effettiva Prelievo', 'Ora Fine Servizio', 
+                            'Ritardo Prelievo (min)', 'Destinazione Finale'
+                        ]]
+                        .style.applymap(lambda x: f'background-color: {driver_color}; color: white; font-weight: bold;', subset=['ID Prenotazione'])
                     )
     
     st.markdown("---")
     
-    # 3. RICERCA E STORICO INTERATTIVO
-    st.markdown("## 🔎 Ricerca e Storico Interattivo")
-    tab1, tab2 = st.tabs(["Ricerca per Cliente (ID)", "Ricerca per Autista (Nome)"])
+    # --- RICERCA E STORICO INTERATTIVO ---
+    st.markdown("## 🔎 Ricerca e Storico Servizi")
+    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
     with tab1:
-        st.subheader("🔍 Dettagli per Cliente Assegnato")
+        st.subheader("🔍 Dettagli Servizio per Cliente")
         client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
         selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
         
         if selected_client_id:
             client_details = assegnazioni_df[assegnazioni_df['ID Prenotazione'] == selected_client_id]
-            st.dataframe(
-                client_details[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                                'Ritardo Prelievo (min)', 'Autista Assegnato', 'Tipo Veicolo Richiesto', 'Stato Assegnazione']]
-            )
+            if not client_details.empty:
+                detail_row = client_details.iloc[0]
+                status_emoji = STATUS_EMOJIS.get(detail_row['Stato Assegnazione'], '')
+                st.markdown(f"**Cliente:** {detail_row['ID Prenotazione']}")
+                st.markdown(f"**Stato:** {detail_row['Stato Assegnazione']} {status_emoji}")
+                if detail_row['Stato Assegnazione'] == 'ASSEGNATO':
+                    st.markdown(f"**Ora di Prelievo Effettiva:** {detail_row['Ora Effettiva Prelievo'].strftime('%H:%M')}")
+                    st.markdown(f"**Autista Assegnato:** {detail_row['Autista Assegnato']}")
+                    st.markdown(f"**Veicolo:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
+                    st.markdown(f"**Ritardo Prelievo:** {detail_row['Ritardo Prelievo (min)']} minuti")
+                else:
+                    st.markdown(f"**Ora di Prelievo Richiesta:** {detail_row['Ora Prelievo Richiesta'].strftime('%H:%M')}")
+                    st.markdown(f"**Tipo Veicolo Richiesto:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
+            else:
+                st.info("Nessun dettaglio trovato per il cliente selezionato.")
 
     with tab2:
-        st.subheader("👤 Storico Autista (Tutti i Servizi)")
+        st.subheader("👤 Storico Servizi per Autista")
         driver_list = [''] + assigned_drivers
         selected_driver_name = st.selectbox("Seleziona l'Autista da ricercare:", driver_list)
         
         if selected_driver_name:
             driver_history = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == selected_driver_name]
-            st.dataframe(
-                driver_history[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                                'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione']]
-            )
+            if not driver_history.empty:
+                st.dataframe(
+                    driver_history[[
+                        'ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
+                        'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione'
+                    ]].style.applymap(lambda x: f'background-color: {DRIVER_COLORS.get(selected_driver_name, DRIVER_COLORS["DEFAULT"])}; color: white;', subset=['ID Prenotazione'])
+                )
+            else:
+                st.info("Nessun servizio assegnato a questo autista.")
 
     # Pulsante per resettare e tornare al caricamento file
     st.markdown("---")
