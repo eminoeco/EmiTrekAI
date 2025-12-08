@@ -127,19 +127,41 @@ def run_scheduling(df_clienti, df_flotta):
 # --- LAYOUT PRINCIPALE ---
 
 if not st.session_state['processed_data']:
-    # --- LOGICA DI SALVATAGGIO DEI DATI CARICATI ---
-# Funzione chiamata quando l'utente clicca il pulsante
-def start_optimization(df_clienti, df_flotta):
-    # Salviamo i dati letti nello stato in modo che non si perdano al refresh
-    st.session_state['temp_df_clienti'] = df_clienti
-    st.session_state['temp_df_flotta'] = df_flotta
+    # === MOSTRA INTERFACCIA DI CARICAMENTO ===
+    st.title("EmiTrekAI: Virtual Operations Manager")
+    st.markdown("### Carica i file per ottimizzare la flotta.")
+    st.markdown("---")
+
+    col1, col2 = st.columns(2)
+    uploaded_clients = None
+    uploaded_flotta = None
     
-    # Eseguiamo la schedulazione passando i dati dallo stato temporaneo
-    run_scheduling(st.session_state['temp_df_clienti'], st.session_state['temp_df_flotta'])
-    
-    # Pulizia (opzionale)
-    if 'temp_df_clienti' in st.session_state: del st.session_state['temp_df_clienti']
-    if 'temp_df_flotta' in st.session_state: del st.session_state['temp_df_flotta']
+    # Variabili per tenere i dati letti in questo ciclo
+    read_df_clienti = None
+    read_df_flotta = None
+
+    with col1:
+        st.header("1. Clienti in Arrivo (Richieste)")
+        uploaded_clients = st.file_uploader("Carica il file Prenotazioni Clienti (lista clienti)", type=['xlsx', 'csv'], key='clients_uploader')
+        if uploaded_clients:
+            read_df_clienti = read_excel_file(uploaded_clients)
+            
+    with col2:
+        st.header("2. La mia flotta NCC (Risorse)")
+        uploaded_flotta = st.file_uploader("Carica il file Flotta Personale (flotta ncc)", type=['xlsx', 'csv'], key='flotta_uploader')
+        if uploaded_flotta:
+            read_df_flotta = read_excel_file(uploaded_flotta)
+
+    # Questo blocco ora è corretto e contiene il pulsante
+    if read_df_clienti is not None and read_df_flotta is not None:
+        st.success("File caricati con successo!")
+        # Questo pulsante avvia la funzione salvando i dati letti (read_df...)
+        st.button("Avvia Ottimizzazione e Visualizza Dashboard", key="run_btn", 
+                  on_click=lambda: start_optimization(read_df_clienti, read_df_flotta))
+        
+else:
+    # === MOSTRA DASHBOARD INTERATTIVA (Il resto del codice della dashboard) ===
+    # ... (omissis, tutto il codice della dashboard finale) ...
 
 
 # --- LAYOUT PRINCIPALE ---
