@@ -5,6 +5,18 @@ import numpy as np
 
 # --- CONFIGURAZIONE GENERALE ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI: VOM", page_icon="🗓️")
+# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO ---
+st.markdown(
+    """
+    <style>
+    .stApp {
+        background-color: #F0F8FF; /* Alice Blue */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+# --------------------------------------------------
 
 # Inizializza lo stato
 if 'processed_data' not in st.session_state:
