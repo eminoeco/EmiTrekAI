@@ -32,7 +32,7 @@ STATUS_EMOJIS = {
     'NON ASSEGNATO': '❌'
 }
 
-# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO (FIX: CSS DEVE ANDARE QUI) ---
+# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO ---
 st.markdown(
     """
     <style>
@@ -171,9 +171,7 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
-    # Rimosso st.rerun() per evitare il warning
-    # L'aggiornamento avverrà tramite la logica del pulsante
-    st.experimental_rerun()
+    st.rerun()
 
 
 # --- LAYOUT PRINCIPALE ---
@@ -266,7 +264,6 @@ else:
     # --- Sezione Operatori/Autisti con Schede Colorate e Emoji ---
     st.subheader("🧑‍✈️ I Nostri Operatori NCC")
     
-    # Prepara il numero di colonne dinamicamente
     drivers_unique = df_risorse['Autista'].unique()
     drivers_overview_cols = st.columns(len(drivers_unique)) 
     
@@ -278,11 +275,12 @@ else:
             
             num_servizi = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == driver].shape[0]
 
+            # QUI LA MODIFICA RICHIESTA: "Fine Servizio Ore" al posto di "Disponibile da"
             st.markdown(f"""
             <div class="driver-card" style="background-color: {driver_color}; color: white;">
                 <p class='big-font'>{driver} {vehicle_emoji}</p>
                 <p>Veicolo: {driver_info['Tipo Veicolo']}</p>
-                <p>Disponibile da: {driver_info['Prossima Disponibilità'].strftime('%H:%M')}</p>
+                <p>Fine Servizio Ore: {driver_info['Prossima Disponibilità'].strftime('%H:%M')}</p>
                 <p>Servizi Assegnati: {num_servizi}</p>
             </div>
             """, unsafe_allow_html=True)
