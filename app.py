@@ -15,7 +15,7 @@ if 'processed_data' not in st.session_state:
 # --- MAPPATURA COLORI E EMOJI (Amichevole) ---
 DRIVER_COLORS = {
     'Andrea': '#4CAF50', # Verde più caldo
-    'Carlo': '#2196F3',  # Blu più morbido
+    'Carlo': '#2199F3',  # Blu più morbido
     'Giulia': '#FFC107', # Giallo-Arancio professionale
     'DEFAULT': '#B0BEC5' # Grigio chiaro
 }
@@ -32,7 +32,7 @@ STATUS_EMOJIS = {
     'NON ASSEGNATO': '❌'
 }
 
-# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO ---
+# --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO e Compattazione ---
 st.markdown(
     """
     <style>
@@ -43,16 +43,15 @@ st.markdown(
         font-size:20px !important;
         font-weight: bold;
     }
-    .emoji-status {
-        font-size:24px !important;
-        vertical-align: middle;
-        margin-right: 5px;
-    }
     .driver-card {
         padding: 15px;
         border-radius: 10px;
         box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
         margin-bottom: 15px;
+    }
+    /* Rende il dataframe più compatto */
+    div.stDataFrame {
+        font-size: 12px;
     }
     </style>
     """,
@@ -235,32 +234,6 @@ else:
     
     st.markdown("---")
 
-    # --- Riepilogo Clienti Assegnati e Non Assegnati con dettagli semplificati ---
-    st.subheader("Dettaglio Clienti")
-    col_clienti_assegnati, col_clienti_non_assegnati = st.columns(2)
-
-    with col_clienti_assegnati:
-        st.markdown("#### Clienti Assegnati ✅")
-        assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO']
-        if not assigned_df.empty:
-            for idx, row in assigned_df.head(5).iterrows():
-                st.info(f"**{row['ID Prenotazione']}** alle {row['Ora Effettiva Prelievo'].strftime('%H:%M')} "
-                        f"con {row['Autista Assegnato']} {VEHICLE_EMOJIS.get(row['Tipo Veicolo Richiesto'], VEHICLE_EMOJIS['Default'])}")
-        else:
-            st.info("Nessun cliente assegnato al momento.")
-
-    with col_clienti_non_assegnati:
-        st.markdown("#### Clienti Non Assegnati ❌")
-        unassigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'NON ASSEGNATO']
-        if not unassigned_df.empty:
-            for idx, row in unassigned_df.head(5).iterrows():
-                st.warning(f"**{row['ID Prenotazione']}** richiesta {row['Ora Prelievo Richiesta'].strftime('%H:%M')} "
-                           f"{VEHICLE_EMOJIS.get(row['Tipo Veicolo Richiesto'], VEHICLE_EMOJIS['Default'])}")
-        else:
-            st.success("Tutti i clienti sono stati assegnati!")
-    
-    st.markdown("---")
-
     # --- Sezione Operatori/Autisti con Schede Colorate e Emoji ---
     st.subheader("🧑‍✈️ I Nostri Operatori NCC")
     
@@ -275,7 +248,6 @@ else:
             
             num_servizi = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == driver].shape[0]
 
-            # QUI LA MODIFICA RICHIESTA: "Fine Servizio Ore" al posto di "Disponibile da"
             st.markdown(f"""
             <div class="driver-card" style="background-color: {driver_color}; color: white;">
                 <p class='big-font'>{driver} {vehicle_emoji}</p>
@@ -287,37 +259,68 @@ else:
 
     st.markdown("---")
 
-    # --- SEQUENZA OPERATIVA DETTAGLIATA ---
-    st.markdown("## 🗓️ Sequenza Operativa Dettagliata per Autista")
-    assigned_drivers = assegnazioni_df['Autista Assegnato'].dropna().unique().tolist()
+    # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA ---
+    st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
+    
+    assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
+    assigned_df = assigned_df.sort_values(by='Ora Effettiva Prelievo').reset_index(drop=True)
 
-    if assigned_drivers:
-        for driver in assigned_drivers:
-            driver_assignments = assegnazioni_df[
-                (assegnazioni_df['Autista Assegnato'] == driver) &
-                (assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO')
-            ].sort_values(by='Ora Effettiva Prelievo').reset_index(drop=True)
+    if not assigned_df.empty:
+        # Calcola l'Ora di Fine Servizio (Ora Arrivo)
+        assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
+        
+        # Prepara il DataFrame con le 9 colonne richieste, rinominandole per chiarezza
+        combined_df = assigned_df.rename(columns={
+            'Autista Assegnato': 'Autista',
+            'ID Prenotazione': 'Cliente',
+            'Indirizzo Prelievo': 'Luogo Partenza', # ASSUMIAMO: 'Indirizzo Prelievo' come Luogo Partenza
+            'Ora Effettiva Prelievo': 'Ora Partenza',
+            'Destinazione Finale': 'Luogo Arrivo',
+            'Ora Fine Servizio': 'Ora Arrivo',
+            'Ritardo Prelievo (min)': 'Ritardo (Min.)',
+            'Tipo Veicolo Richiesto': 'Veicolo',
+            'Tempo Servizio Totale (Minuti)': 'Durata (Min.)',
+        })
+        
+        # Aggiungi l'Emoji al Veicolo per renderlo più intuitivo
+        combined_df['Veicolo'] = combined_df['Veicolo'].apply(lambda x: VEHICLE_EMOJIS.get(x, VEHICLE_EMOJIS['Default']) + " " + x)
+
+        # Seleziona e riordina le 9 colonne richieste
+        display_cols = [
+            'Autista', 'Cliente', 'Luogo Partenza', 'Ora Partenza', 
+            'Luogo Arrivo', 'Ora Arrivo', 'Ritardo (Min.)', 
+            'Veicolo', 'Durata (Min.)'
+        ]
+        
+        # Filtra solo le colonne esistenti per evitare errori, nel caso manchi "Indirizzo Prelievo"
+        final_cols = [col for col in display_cols if col in combined_df.columns]
+
+        # Funzione di styling per colorare solo Autista e Cliente
+        def highlight_driver_client(row):
+            styles = []
+            driver_name = row['Autista']
+            color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
             
-            if not driver_assignments.empty:
-                vehicle_type = driver_assignments['Tipo Veicolo Richiesto'].iloc[0]
-                driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
-                vehicle_emoji = VEHICLE_EMOJIS.get(vehicle_type, VEHICLE_EMOJIS['Default'])
-                
-                driver_assignments['Ora Fine Servizio'] = driver_assignments.apply(calculate_end_time, axis=1)
+            # Applica il colore alle colonne Autista e Cliente
+            for col in combined_df.columns:
+                if col in ['Autista', 'Cliente']:
+                    styles.append(f'background-color: {color}; color: white; font-weight: bold;')
+                else:
+                    styles.append('')
+            return styles
 
-                with st.expander(f"🚗 **{driver}** ({driver_assignments.shape[0]} servizi) - [Tipo: {vehicle_type} {vehicle_emoji}]", expanded=False):
-                    st.markdown(f"#### Dettagli Operativi per **{driver}**")
-                    st.dataframe(
-                        driver_assignments[[
-                            'ID Prenotazione', 'Ora Effettiva Prelievo', 'Ora Fine Servizio', 
-                            'Ritardo Prelievo (min)', 'Destinazione Finale'
-                        ]]
-                        .style.applymap(lambda x: f'background-color: {driver_color}; color: white; font-weight: bold;', subset=['ID Prenotazione'])
-                    )
+        st.dataframe(
+            combined_df[final_cols]
+            .style.apply(highlight_driver_client, axis=1)
+            .set_properties(**{'font-size': '10pt'}) # Rende il testo piccolo
+            , use_container_width=True
+        )
+    else:
+        st.info("Nessun cliente assegnato. La tabella è vuota.")
     
     st.markdown("---")
-    
-    # --- RICERCA E STORICO INTERATTIVO ---
+
+    # --- RICERCA E STORICO INTERATTIVO (Mantenuto) ---
     st.markdown("## 🔎 Ricerca e Storico Servizi")
     tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
@@ -337,7 +340,7 @@ else:
                     st.markdown(f"**Ora di Prelievo Effettiva:** {detail_row['Ora Effettiva Prelievo'].strftime('%H:%M')}")
                     st.markdown(f"**Autista Assegnato:** {detail_row['Autista Assegnato']}")
                     st.markdown(f"**Veicolo:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
-                    st.markdown(f"**Ritardo Prelievo:** {detail_row['Ritardo Prelievo (min)']} minuti")
+                    st.markdown(f"**Ritardo Prelievo:** {detail_row['Ritardo (Min.)']} minuti")
                 else:
                     st.markdown(f"**Ora di Prelievo Richiesta:** {detail_row['Ora Prelievo Richiesta'].strftime('%H:%M')}")
                     st.markdown(f"**Tipo Veicolo Richiesto:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
