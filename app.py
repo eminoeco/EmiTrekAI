@@ -257,9 +257,16 @@ if df_clienti is not None and df_flotta is not None:
         st.error("🚨 Clienti NON ASSEGNATI - Nessuna risorsa disponibile o turno non coperto!")
         st.dataframe(non_assegnati[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Tipo Veicolo Richiesto', 'Stato Assegnazione']])
 
-    # SALVA I DATI NELLA SESSIONE PER POTERLI USARE NELLA PAGINA STORICO (solo se il matching è avvenuto)
+  # ... (TUTTO IL CODICE PRECEDENTE DI MATCHING E RISORSE RESTA INVARIATO) ...
+
+    # === PUNTO DI INSERIMENTO (DOPO I CALCOLI E PRIMA DELLA FINE DEL BLOCCO IF) ===
+    # SALVA I DATI NELLA SESSIONE PER POTERLI USARE NELLA PAGINA DI VISUALIZZAZIONE
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
-    # SALVA I DATI NELLA SESSIONE PER POTERLI USARE NELLA PAGINA STORICO (solo se il matching è avvenuto)
-    st.session_state['assegnazioni_complete'] = assegnazioni_df
-    st.session_state['flotta_risorse'] = df_risorse
+    
+    # MOSTRA UN MESSAGGIO AMICHEVOLE E REINDIRIZZA
+    st.success("🎉 File processati! Clicca 'Visualizza Schedulazione' o attendi il reindirizzamento...")
+    st.button("Visualizza Schedulazione Dettagliata", on_click=lambda: st.switch_page("pages/1_Storico.py"))
+    
+    # Reindirizzamento automatico dopo il caricamento
+    # st.experimental_rerun() # Disattivato per consentire il click manuale se preferisci
