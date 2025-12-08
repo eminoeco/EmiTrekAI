@@ -12,16 +12,15 @@ if 'processed_data' not in st.session_state:
     st.session_state['flotta_risorse'] = None
 
 # --- MAPPATURA COLORI ---
-# Colori per i tipi di veicolo per dare coerenza all'interfaccia
+# Colori mappati per il tipo di veicolo (coerenza visiva)
 VEHICLE_COLORS = {
-    'Berlina': '#2ecc71', # Verde Smeraldo (Es. Andrea)
-    'Minivan': '#3498db', # Blu (Es. Carlo)
+    'Berlina': '#2ecc71', # Verde Smeraldo
+    'Minivan': '#3498db', # Blu
     'Bus': '#f39c12'      # Arancione
 }
 
 # --- FUNZIONI DI SUPPORTO ---
 def read_excel_file(uploaded_file):
-    # Funzione per la lettura dei file
     try:
         if uploaded_file.name.endswith('.csv'):
              df = pd.read_csv(uploaded_file)
@@ -33,34 +32,30 @@ def read_excel_file(uploaded_file):
         return None
 
 def time_to_minutes(t):
-    # Funzione per convertire time in total minutes
     return t.hour * 60 + t.minute
 
 def to_time(val):
-    # Funzione per convertire in oggetto time da diversi formati
     if isinstance(val, datetime): return val.time()
     if isinstance(val, time): return val
     if isinstance(val, str): 
         try: return datetime.strptime(val, '%H:%M').time()
         except ValueError: pass
         try: return datetime.strptime(val, '%H.%M').time()
-        except ValueError: return time(0, 0) # Fallback in caso di errore
-    return time(0, 0) # Fallback finale
+        except ValueError: return time(0, 0)
+    return time(0, 0)
 
-# Funzione per calcolare l'Ora Fine Servizio (usata nella dashboard)
 def calculate_end_time(row):
     try:
-        # L'Ora Effettiva Prelievo è già un oggetto time o datetime.time
         start_dt = datetime.combine(datetime.today(), row['Ora Effettiva Prelievo'])
         end_dt = start_dt + timedelta(minutes=int(row['Tempo Servizio Totale (Minuti)']))
         return end_dt.time()
     except Exception:
         return time(0, 0)
 
-
 # --- LOGICA DI SCHEDULAZIONE (CORE) ---
 def run_scheduling(df_clienti, df_flotta):
     
+    # Prepara i DataFrame per l'algoritmo
     assegnazioni_df = df_clienti.copy()
     assegnazioni_df['ID Veicolo Assegnato'] = None
     assegnazioni_df['Autista Assegnato'] = None
@@ -70,7 +65,7 @@ def run_scheduling(df_clienti, df_flotta):
     
     df_risorse = df_flotta.copy()
     
-    # Prepara le risorse e i clienti
+    # Inizializza stato dinamico della risorsa
     df_risorse['Prossima Disponibilità'] = df_risorse['Disponibile Da (hh:mm)'].apply(to_time)
     df_risorse['Disponibile Fino (hh:mm)'] = df_risorse['Disponibile Fino (hh:mm)'].apply(to_time)
     df_risorse['Tipo Veicolo'] = df_risorse['Tipo Veicolo'].str.capitalize()
@@ -85,8 +80,7 @@ def run_scheduling(df_clienti, df_flotta):
         ora_richiesta = cliente['Ora Prelievo Richiesta']
         veicolo_richiesto = cliente['Tipo Veicolo Richiesto']
         
-        if 'Tempo Servizio Totale (Minuti)' not in cliente or pd.isna(cliente['Tempo Servizio Totale (Minuti)']):
-            continue # Salta se manca il tempo di servizio
+        if 'Tempo Servizio Totale (Minuti)' not in cliente or pd.isna(cliente['Tempo Servizio Totale (Minuti)']): continue
             
         tempo_servizio_totale = int(cliente['Tempo Servizio Totale (Minuti)'])
         
@@ -99,22 +93,18 @@ def run_scheduling(df_clienti, df_flotta):
         
         tempo_richiesto_min = time_to_minutes(ora_richiesta)
         
-        # Filtra solo le risorse disponibili O con un ritardo gestibile
         candidati_validi['Ritardo Min'] = (candidati_validi['Prossima Disponibilità'].apply(time_to_minutes) - tempo_richiesto_min).clip(lower=0)
-        
-        # Ordina per ritardo minimo
         risorsa_assegnata = candidati_validi.sort_values(by='Ritardo Min').iloc[0]
         
         ritardo_minuti = int(risorsa_assegnata['Ritardo Min']) 
         
-        # Calcola orari effettivi
         ora_effettiva_prelievo_dt = datetime.combine(datetime.today(), ora_richiesta) + timedelta(minutes=ritardo_minuti)
         ora_effettiva_prelievo = ora_effettiva_prelievo_dt.time()
         
         ora_fine_servizio_dt = ora_effettiva_prelievo_dt + timedelta(minutes=tempo_servizio_totale)
         ora_fine_servizio = ora_fine_servizio_dt.time()
 
-        if ora_fine_servizio > risorsa_assegnata['Disponibile Fino (hh:mm)']: continue # Fuori orario
+        if ora_fine_servizio > risorsa_assegnata['Disponibile Fino (hh:mm)']: continue
             
         # AGGIORNA l'assegnazione
         assegnazioni_df.loc[index, 'ID Veicolo Assegnato'] = risorsa_assegnata['ID Veicolo']
@@ -123,14 +113,14 @@ def run_scheduling(df_clienti, df_flotta):
         assegnazioni_df.loc[index, 'Ora Effettiva Prelievo'] = ora_effettiva_prelievo
         assegnazioni_df.loc[index, 'Ritardo Prelievo (min)'] = ritardo_minuti
         
-        # AGGIORNA la risorsa (Prossima Disponibilità)
+        # AGGIORNA la risorsa
         df_risorse.loc[df_risorse['ID Veicolo'] == risorsa_assegnata['ID Veicolo'], 'Prossima Disponibilità'] = ora_fine_servizio
 
     # SALVA NELLO STATO E IMPOSTA COME PROCESSATO
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
-    st.experimental_rerun()
+    st.experimental_rerun() # Forza il refresh per mostrare i risultati
 
 
 # --- LAYOUT PRINCIPALE ---
@@ -156,9 +146,10 @@ if not st.session_state['processed_data']:
         df_clienti = read_excel_file(uploaded_clients)
         df_flotta = read_excel_file(uploaded_flotta)
         if df_clienti is not None and df_flotta is not None:
-            # Esegui schedulazione e salvataggio
-            run_scheduling(df_clienti, df_flotta)
-
+            # Pulsante per avviare il calcolo in modo controllato (FIX)
+            st.button("Avvia Ottimizzazione e Visualizza Dashboard", key="run_btn", 
+                      on_click=lambda: run_scheduling(df_clienti, df_flotta))
+            
 else:
     # === MOSTRA DASHBOARD INTERATTIVA (DOPO IL CARICAMENTO) ===
     assegnazioni_df = st.session_state['assegnazioni_complete']
@@ -169,11 +160,10 @@ else:
     st.markdown("---")
 
     # 1. STATO FLOTTA (CON COLORI)
-    st.markdown("### 🚦 Stato di Disponibilità della Flotta (Colori per Tipo Veicolo)")
+    st.markdown("### 🚦 Stato di Disponibilità della Flotta")
     
     def highlight_resource_type(row):
         color = VEHICLE_COLORS.get(row['Tipo Veicolo'], 'gray')
-        # Applica il colore allo sfondo del veicolo e dell'autista
         return [f'background-color: {color}; color: white; font-weight: bold;' if col == 'Tipo Veicolo' or col == 'Autista' else '' for col in row.index]
 
     st.dataframe(
@@ -201,22 +191,19 @@ else:
                 
                 driver_assignments['Ora Fine Servizio'] = driver_assignments.apply(calculate_end_time, axis=1)
 
-                # Colore coerente per l'expander
                 with st.expander(f"🚗 **{driver}** ({driver_assignments.shape[0]} servizi) - [Tipo: {vehicle_type}]", expanded=False):
-                    st.markdown(f"#### Clienti in Sequenza - Autista {driver}")
-                    
+                    st.markdown(f"#### Clienti in Sequenza - Autista **{driver}**")
                     st.dataframe(
                         driver_assignments[[
                             'ID Prenotazione', 'Ora Effettiva Prelievo', 'Ora Fine Servizio', 
                             'Ritardo Prelievo (min)', 'Destinazione Finale', 'Tempo Servizio Totale (Minuti)'
                         ]]
-                        # Evidenzia il cliente per il colore specifico dell'operatore/veicolo
                         .style.set_properties(**{'background-color': driver_color, 'color': 'white'}, subset=['ID Prenotazione'])
                     )
     
     st.markdown("---")
     
-    # 3. RICERCA E STORICO INTERATTIVO (LA TUA RICHIESTA FINALE)
+    # 3. RICERCA E STORICO INTERATTIVO
     st.markdown("## 🔎 Ricerca e Storico Interattivo")
     tab1, tab2 = st.tabs(["Ricerca per Cliente (ID)", "Ricerca per Autista (Nome)"])
     
@@ -228,10 +215,8 @@ else:
         if selected_client_id:
             client_details = assegnazioni_df[assegnazioni_df['ID Prenotazione'] == selected_client_id]
             st.dataframe(
-                client_details[[
-                    'ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                    'Ritardo Prelievo (min)', 'Autista Assegnato', 'Tipo Veicolo Richiesto', 'Stato Assegnazione'
-                ]]
+                client_details[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
+                                'Ritardo Prelievo (min)', 'Autista Assegnato', 'Tipo Veicolo Richiesto', 'Stato Assegnazione']]
             )
 
     with tab2:
@@ -242,10 +227,8 @@ else:
         if selected_driver_name:
             driver_history = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == selected_driver_name]
             st.dataframe(
-                driver_history[[
-                    'ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                    'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione'
-                ]]
+                driver_history[['ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
+                                'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione']]
             )
 
     # Pulsante per resettare e tornare al caricamento file
