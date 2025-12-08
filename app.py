@@ -5,18 +5,19 @@ from datetime import datetime, time, timedelta
 # --- CONFIGURAZIONE GENERALE ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI: VOM", page_icon="🗓️")
 
-# Inizializza lo stato per controllare se i dati sono stati processati
+# Inizializza lo stato
 if 'processed_data' not in st.session_state:
     st.session_state['processed_data'] = False
     st.session_state['assegnazioni_complete'] = None
     st.session_state['flotta_risorse'] = None
 
-# --- MAPPATURA COLORI ---
-# Colori mappati per il tipo di veicolo (coerenza visiva)
-VEHICLE_COLORS = {
-    'Berlina': '#2ecc71', # Verde Smeraldo
-    'Minivan': '#3498db', # Blu
-    'Bus': '#f39c12'      # Arancione
+# --- MAPPATURA COLORI (SU RICHIESTA ESPRESSA) ---
+# Ogni operatore NCC ha un colore fisso che lo identifica.
+DRIVER_COLORS = {
+    'Andrea': '#2ecc71', # Verde per Andrea
+    'Carlo': '#3498db',  # Blu per Carlo
+    'Giulia': '#f39c12', # Arancione per Giulia
+    'DEFAULT': '#95a5a6' # Grigio per Autisti non mappati o Non Assegnato
 }
 
 # --- FUNZIONI DI SUPPORTO ---
@@ -146,7 +147,7 @@ if not st.session_state['processed_data']:
         df_clienti = read_excel_file(uploaded_clients)
         df_flotta = read_excel_file(uploaded_flotta)
         if df_clienti is not None and df_flotta is not None:
-            # Pulsante per avviare il calcolo in modo controllato (FIX)
+            # Pulsante per avviare il calcolo in modo controllato
             st.button("Avvia Ottimizzazione e Visualizza Dashboard", key="run_btn", 
                       on_click=lambda: run_scheduling(df_clienti, df_flotta))
             
@@ -159,22 +160,25 @@ else:
     st.markdown("### La tua flotta sta lavorando in modo intelligente!")
     st.markdown("---")
 
-    # 1. STATO FLOTTA (CON COLORI)
-    st.markdown("### 🚦 Stato di Disponibilità della Flotta")
+    # 1. STATO FLOTTA (CON COLORI PER AUTISTA)
+    st.markdown("### 🚦 Stato di Disponibilità della Flotta (Colori Autista)")
     
-    def highlight_resource_type(row):
-        color = VEHICLE_COLORS.get(row['Tipo Veicolo'], 'gray')
-        return [f'background-color: {color}; color: white; font-weight: bold;' if col == 'Tipo Veicolo' or col == 'Autista' else '' for col in row.index]
+    def highlight_driver_color(row):
+        # Usa il nome dell'autista per determinare il colore
+        driver_name = row['Autista']
+        color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
+        # Applica il colore allo sfondo dell'autista e del veicolo
+        return [f'background-color: {color}; color: white; font-weight: bold;' if col == 'Autista' or col == 'Tipo Veicolo' else '' for col in row.index]
 
     st.dataframe(
         df_risorse[['ID Veicolo', 'Autista', 'Tipo Veicolo', 'Prossima Disponibilità']]
         .sort_values(by='Prossima Disponibilità')
-        .style.apply(highlight_resource_type, axis=1)
+        .style.apply(highlight_driver_color, axis=1)
     )
 
     st.markdown("---")
 
-    # 2. SEQUENZA OPERATIVA DETTAGLIATA (CON EXPANDER E COLORI COERENTI)
+    # 2. SEQUENZA OPERATIVA DETTAGLIATA (CON EXPANDER E COLORI AUTISTA)
     st.markdown("## 🗓️ Sequenza Operativa Dettagliata per Autista")
     assigned_drivers = assegnazioni_df['Autista Assegnato'].dropna().unique().tolist()
 
@@ -187,7 +191,8 @@ else:
             
             if not driver_assignments.empty:
                 vehicle_type = driver_assignments['Tipo Veicolo Richiesto'].iloc[0]
-                driver_color = VEHICLE_COLORS.get(vehicle_type, '#95a5a6')
+                # Usa il colore specifico dell'autista
+                driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
                 
                 driver_assignments['Ora Fine Servizio'] = driver_assignments.apply(calculate_end_time, axis=1)
 
@@ -198,6 +203,7 @@ else:
                             'ID Prenotazione', 'Ora Effettiva Prelievo', 'Ora Fine Servizio', 
                             'Ritardo Prelievo (min)', 'Destinazione Finale', 'Tempo Servizio Totale (Minuti)'
                         ]]
+                        # Evidenzia la riga con il colore specifico dell'autista
                         .style.set_properties(**{'background-color': driver_color, 'color': 'white'}, subset=['ID Prenotazione'])
                     )
     
