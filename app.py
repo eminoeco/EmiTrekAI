@@ -259,9 +259,9 @@ if df_clienti is not None and df_flotta is not None:
 
   # === DEVI AGGIUNGERE LA FUNZIONE QUI SOPRA ===
 def redirect_to_storico():
-
-    st.switch_page("storico")
-
+    # Il nome della pagina in Streamlit è sempre il nome del file SENZA estensione.
+    # Streamlit ignora il numero iniziale (1_) nel nome.
+    st.switch_page("1_Storico") # <--- RIMETTI "1_Storico"
 # ... (il codice precedente che imposta i session state) ...
 
 # MOSTRA UN MESSAGGIO AMICHEVOLE E REINDIRIZZA
