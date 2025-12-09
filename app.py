@@ -4,29 +4,28 @@ from datetime import datetime, time, timedelta
 import numpy as np
 from io import BytesIO
 
-# FIX PER STREAMLIT CLOUD: disabilita warning e chained assignment
+# FIX PER STREAMLIT CLOUD
 pd.options.mode.chained_assignment = None
-
 
 # --- CONFIGURAZIONE GENERALE ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI: VOM", page_icon="🗓️")
 
-# Inizializza lo stato in modo sicuro
+# --- Inizializzazione dello Stato ---
 if 'processed_data' not in st.session_state:
     st.session_state['processed_data'] = False
     st.session_state['assegnazioni_complete'] = None
     st.session_state['flotta_risorse'] = None
 
-# --- MAPPATURA COLORI E EMOJI (7 COLORI) ---
+# --- MAPPATURA COLORI E EMOJI ---
 DRIVER_COLORS = {
-    'Andrea': '#4CAF50',    # Verde
-    'Carlo': '#2199F3',     # Blu
-    'Giulia': '#FFC107',    # Giallo
-    'Marco': '#E91E63',     # Rosa/Fucsia
-    'Luca': '#00BCD4',      # Azzurro
-    'Sara': '#FF5722',      # Arancione
-    'Elena': '#673AB7',     # Viola
-    'DEFAULT': '#B0BEC5'    # Grigio
+    'Andrea': '#4CAF50',    
+    'Carlo': '#2199F3',     
+    'Giulia': '#FFC107',    
+    'Marco': '#E91E63',     
+    'Luca': '#00BCD4',      
+    'Sara': '#FF5722',      
+    'Elena': '#673AB7',     
+    'DEFAULT': '#B0BEC5'    
 }
 
 VEHICLE_EMOJIS = {
@@ -41,37 +40,16 @@ STATUS_EMOJIS = {
     'NON ASSEGNATO': '❌'
 }
 
-# --- INIEZIONE CSS SEMPLIFICATA ---
+# --- INIEZIONE CSS (Stili) ---
 st.markdown(
     """
     <style>
-    .stApp {
-        background-color: #F0F8FF;
-    }
-    .big-font {
-        font-size:20px !important;
-        font-weight: bold;
-    }
-    .card-title-font {
-        font-size: 16px !important; 
-        font-weight: bold;
-        margin-bottom: 5px; 
-    }
-    .driver-card {
-        padding: 8px;
-        border-radius: 8px;
-        box-shadow: 1px 1px 5px rgba(0,0,0,0.1);
-        margin-bottom: 8px;
-        line-height: 1.2;
-        height: 100%;
-    }
-    .driver-card p {
-        font-size: 12px;
-        margin: 0;
-    }
-    div.stDataFrame {
-        font-size: 12px;
-    }
+    .stApp {background-color: #F0F8FF;}
+    .big-font {font-size:20px !important; font-weight: bold;}
+    .card-title-font {font-size: 16px !important; font-weight: bold; margin-bottom: 5px;}
+    .driver-card {padding: 8px; border-radius: 8px; box-shadow: 1px 1px 5px rgba(0,0,0,0.1); margin-bottom: 8px; line-height: 1.2; height: 100%;}
+    .driver-card p {font-size: 12px; margin: 0;}
+    div.stDataFrame {font-size: 12px;}
     </style>
     """,
     unsafe_allow_html=True
@@ -132,7 +110,6 @@ def run_scheduling(df_clienti, df_flotta):
     df_risorse['Disponibile Fino (hh:mm)'] = df_risorse['Disponibile Fino (hh:mm)'].apply(to_time)
     df_risorse['Tipo Veicolo'] = df_risorse['Tipo Veicolo'].astype(str).str.capitalize()
     
-    # Inizializza il contatore dei servizi per il load balancing
     df_risorse['Servizi Assegnati'] = 0 
     
     assegnazioni_df['Ora Prelievo Richiesta'] = assegnazioni_df['Ora Arrivo'].apply(to_time)
@@ -145,6 +122,7 @@ def run_scheduling(df_clienti, df_flotta):
         ora_richiesta = cliente['Ora Prelievo Richiesta']
         veicolo_richiesto = cliente['Tipo Veicolo Richiesto']
         
+        # RICORDA: 'Tempo Servizio Totale (Minuti)' è letto dal file, non calcolato da API
         if 'Tempo Servizio Totale (Minuti)' not in cliente or pd.isna(cliente['Tempo Servizio Totale (Minuti)']): continue
             
         try:
@@ -161,10 +139,9 @@ def run_scheduling(df_clienti, df_flotta):
         
         tempo_richiesto_min = time_to_minutes(ora_richiesta)
         
-        # Calcolo del ritardo minimo
         candidati_validi['Ritardo Min'] = (candidati_validi['Prossima Disponibilità'].apply(time_to_minutes) - tempo_richiesto_min).clip(lower=0)
         
-        # LOGICA DI BILANCIAMENTO DEL CARICO: Ordina per 1. Ritardo Minimo, 2. Servizi Assegnati Minimi, 3. Prossima Disponibilità
+        # LOGICA DI BILANCIAMENTO DEL CARICO
         risorsa_assegnata = candidati_validi.sort_values(
             by=['Ritardo Min', 'Servizi Assegnati', 'Prossima Disponibilità']
         ).iloc[0] 
@@ -186,31 +163,29 @@ def run_scheduling(df_clienti, df_flotta):
         assegnazioni_df.loc[index, 'Ora Effettiva Prelievo'] = ora_effettiva_prelievo
         assegnazioni_df.loc[index, 'Ritardo Prelievo (min)'] = ritardo_minuti
         
-        # AGGIORNA la risorsa (Prossima Disponibilità e conteggio servizi)
+        # AGGIORNA la risorsa
         df_risorse.loc[df_risorse['ID Veicolo'] == risorsa_assegnata['ID Veicolo'], 'Prossima Disponibilità'] = ora_fine_servizio
         df_risorse.loc[df_risorse['ID Veicolo'] == risorsa_assegnata['ID Veicolo'], 'Servizi Assegnati'] += 1
 
-    # SALVA NELLO STATO E IMPOSTA COME PROCESSATO
+    # SALVA NELLO STATO
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
     st.rerun()
 
-# --- FUNZIONE RATIONALE AI (VOS: RIEPILOGO ANALITICO E PROFESSIONALE) ---
+# --- FUNZIONE VOS: RIEPILOGO ANALITICO (Senza titolo H3, per usarlo nell'expander) ---
 def generate_ai_report_explanation(driver_df, driver_name, df_risorse):
     
     driver_info = df_risorse[df_risorse['Autista'] == driver_name].iloc[0]
     vehicle_type = driver_info['Tipo Veicolo']
     
-    # Nuovo titolo: VOS - Virtual Operations Summary
-    report = f"### 📊 VOS: Riepilogo Analitico Operatore {driver_name}\n\n"
+    report = "" # Iniziamo senza il titolo H3
     
     if driver_df.empty:
         colleagues = df_risorse[df_risorse['Tipo Veicolo'] == vehicle_type]['Autista'].tolist()
         colleagues.remove(driver_name)
         
-        return (f"{report}"
-                f"**Analisi Status:** L'Operatore {driver_name} non è stato assegnato a servizi in questa sequenza operativa.\n"
+        return (f"**Analisi Status:** L'Operatore {driver_name} non è stato assegnato a servizi in questa sequenza operativa.\n"
                 f"**Motivazione:** Nonostante la disponibilità del veicolo **{vehicle_type}**, la mancanza di servizi è dovuta alla logica di **bilanciamento del carico**. Le richieste compatibili sono state prioritariamente distribuite tra i colleghi ({', '.join(colleagues)}) per garantire un'equa ripartizione del lavoro.")
 
     
@@ -221,14 +196,12 @@ def generate_ai_report_explanation(driver_df, driver_name, df_risorse):
     
     report += f"**Riepilogo Assegnazioni:** {driver_name} ha ricevuto **{total_services} servizi** per un impegno totale di **{total_duration} minuti** con il veicolo **{vehicle_type}**.\n\n"
     
-    # Spiegazione logica di scheduling
     report += f"**Logica di Scheduling (Load Balancing):** L'allocazione è stata ottimizzata scegliendo la risorsa con il **minore carico di lavoro** tra i candidati idonei (stesso veicolo e minimo ritardo), assicurando così la distribuzione più equa possibile.\n\n"
     
     report += "**Sequenza Operativa Passaggio-per-Passaggio:**\n"
     
     previous_end_time = None
     
-    # Dettaglio sequenza operativa
     for i, row in driver_df.iterrows():
         ora_partenza = row['Ora Partenza']
         ora_arrivo = row['Ora Arrivo']
@@ -236,15 +209,13 @@ def generate_ai_report_explanation(driver_df, driver_name, df_risorse):
         cliente = row['Cliente']
         destinazione = row['Arrivo']
         
-        step_description = f"{i}. Cliente **{cliente}** (da {row['Partenza']} a {destinazione}):"
+        step_description = f"• {i}. Cliente **{cliente}** (da {row['Partenza']} a {destinazione}):"
         
         if ritardo > 0:
             step_description += f" Partenza Effettiva: **{ora_partenza}** (Ritardo di {ritardo} min). Fine Servizio Stimata: {ora_arrivo}.\n"
         elif previous_end_time is None:
-            # Primo servizio
             step_description += f" Inizio attività. Partenza Effettiva: **{ora_partenza}**. Fine Servizio Stimata: {ora_arrivo}.\n"
         else:
-            # Servizi successivi senza ritardo (parte subito)
              step_description += f" Transito immediato. Partenza Effettiva: **{ora_partenza}**. Fine Servizio Stimata: {ora_arrivo}.\n"
              
         report += step_description
@@ -403,7 +374,7 @@ else:
     st.markdown("---")
 
     # =============================================================================
-    # REPORT INDIVIDUALE AUTISTA (CON RATIONALE AI UMANIZZATO)
+    # REPORT INDIVIDUALE AUTISTA (CON VOS SU EXPANDER)
     # =============================================================================
     st.subheader("Report Individuale Autista")
 
@@ -428,9 +399,11 @@ else:
 
             st.dataframe(driver_df, use_container_width=True, hide_index=False)
             
-            # AGGIUNGI IL REPORT AI ESPLICATIVO (VOS)
+            # AGGIUNGI IL REPORT VOS TRAMITE EXPANDER
             report_explanation = generate_ai_report_explanation(driver_df, selected_driver, df_risorse)
-            st.info(report_explanation) # Usa st.info per un effetto 'pop-up' style box
+            
+            with st.expander(f"📊 VOS: Riepilogo Analitico Operatore {selected_driver}"):
+                st.markdown(report_explanation, unsafe_allow_html=True)
 
             oggi = datetime.now().strftime("%d-%m-%Y")
             
