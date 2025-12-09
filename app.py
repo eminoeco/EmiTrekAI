@@ -32,6 +32,28 @@ STATUS_EMOJIS = {
     'NON ASSEGNATO': '❌'
 }
 
+# --- FUNZIONE DI STYLING GLOBALE ---
+def highlight_driver_client(s, final_cols, driver_colors):
+    # s è la Series (riga) passata da apply
+    
+    # Determina il colore
+    driver_name = s['Autista']
+    color = driver_colors.get(driver_name, driver_colors['DEFAULT'])
+    
+    # Crea una Series di stili vuoti (stili di base)
+    styles = pd.Series('', index=s.index)
+
+    # Itera sui nomi di colonna che sono VISIBILI (final_cols)
+    for col in final_cols:
+        if col in ['Autista', 'Cliente']:
+            styles[col] = f'background-color: {color}; color: white; font-weight: bold;'
+        else:
+            styles[col] = ''
+    
+    return styles
+# -------------------------------------
+
+
 # --- INIEZIONE CSS PER SFONDO AZZURRINO CHIARO e Compattazione ---
 st.markdown(
     """
@@ -170,7 +192,7 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
-    st.rerun()
+    st.rerun() # Usiamo st.rerun() per evitare il warning
 
 
 # --- LAYOUT PRINCIPALE ---
@@ -244,7 +266,7 @@ else:
         with drivers_overview_cols[i]:
             driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
             driver_info = df_risorse[df_risorse['Autista'] == driver].iloc[0]
-            vehicle_emoji = VEHICLE_EMOJIS.get(driver_info['Tipo Veicolo'], VEHICLE_EMOJIS['Default'])
+            vehicle_emoji = VEHICLE_EMOJIS.get(driver_info['Tipo Veicolo'], VEHICLE_EMOJIS['DEFAULT'])
             
             num_servizi = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == driver].shape[0]
 
@@ -259,76 +281,75 @@ else:
 
     st.markdown("---")
 
- # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA (FIXED) ---
-st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
-
-assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
-assigned_df = assigned_df.sort_values(by='Ora Effettiva Prelievo').reset_index(drop=True)
-
-if not assigned_df.empty:
-    # Calcola l'Ora di Fine Servizio (Ora Arrivo)
-    assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
+    # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA ---
+    st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
-    # Prepara il DataFrame con le 9 colonne richieste, rinominandole per chiarezza
-    combined_df = assigned_df.rename(columns={
-        'Autista Assegnato': 'Autista',
-        'ID Prenotazione': 'Cliente',
-        'Indirizzo Prelievo': 'Luogo Partenza',
-        'Ora Effettiva Prelievo': 'Ora Partenza',
-        'Destinazione Finale': 'Luogo Arrivo',
-        'Ora Fine Servizio': 'Ora Arrivo',
-        'Ritardo Prelievo (min)': 'Ritardo (Min.)',
-        'Tipo Veicolo Richiesto': 'Veicolo',
-        'Tempo Servizio Totale (Minuti)': 'Durata (Min.)',
-    })
-    
-    # Aggiungi l'Emoji al Veicolo per renderlo più intuitivo
-    combined_df['Veicolo'] = combined_df['Veicolo'].apply(lambda x: VEHICLE_EMOJIS.get(x, VEHICLE_EMOJIS['Default']) + " " + x)
+    assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
+    assigned_df = assigned_df.sort_values(by='Ora Effettiva Prelievo').reset_index(drop=True)
 
-    # Seleziona e riordina le 9 colonne richieste
-    final_cols = [
-        'Autista', 'Cliente', 'Luogo Partenza', 'Ora Partenza', 
-        'Luogo Arrivo', 'Ora Arrivo', 'Ritardo (Min.)', 
-        'Veicolo', 'Durata (Min.)'
-    ]
-    
-    # Filtra solo le colonne esistenti
-    final_cols = [col for col in final_cols if col in combined_df.columns]
-
-    # --- FUNZIONE DI STYLING CORRETTA (DEVE ESSERE QUI DOPO final_cols) ---
-    def highlight_driver_client(row):
-        styles = []
-        driver_name = row['Autista']
-        color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
+    if not assigned_df.empty:
+        # Calcola l'Ora di Fine Servizio (Ora Arrivo)
+        assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
         
-        # Itera solo sulle colonne definite in final_cols (risolvendo il ValueError)
-        for col in final_cols: 
-            if col in ['Autista', 'Cliente']:
-                styles.append(f'background-color: {color}; color: white; font-weight: bold;')
-            else:
-                styles.append('')
-        return styles
-    # ----------------------------------------------------------------------
+        # Prepara il DataFrame con le 9 colonne richieste, rinominandole per chiarezza
+        combined_df = assigned_df.rename(columns={
+            'Autista Assegnato': 'Autista',
+            'ID Prenotazione': 'Cliente',
+            'Indirizzo Prelievo': 'Luogo Partenza',
+            'Ora Effettiva Prelievo': 'Ora Partenza',
+            'Destinazione Finale': 'Luogo Arrivo',
+            'Ora Fine Servizio': 'Ora Arrivo',
+            'Ritardo Prelievo (min)': 'Ritardo (Min.)',
+            'Tipo Veicolo Richiesto': 'Veicolo',
+            'Tempo Servizio Totale (Minuti)': 'Durata (Min.)',
+        })
+        
+        # Aggiungi l'Emoji al Veicolo per renderlo più intuitivo
+        combined_df['Veicolo'] = combined_df['Veicolo'].apply(lambda x: VEHICLE_EMOJIS.get(x.split(' ')[0], VEHICLE_EMOJIS['Default']) + " " + x)
 
-    st.dataframe(
-        combined_df[final_cols]
-        .style.apply(highlight_driver_client, axis=1)
-        .set_properties(**{'font-size': '10pt'})
-        , use_container_width=True
-    )
-else:
-    st.info("Nessun cliente assegnato. La tabella è vuota.")
+        # Seleziona e riordina le 9 colonne richieste
+        final_cols = [
+            'Autista', 'Cliente', 'Luogo Partenza', 'Ora Partenza', 
+            'Luogo Arrivo', 'Ora Arrivo', 'Ritardo (Min.)', 
+            'Veicolo', 'Durata (Min.)'
+        ]
+        
+        # Filtra solo le colonne esistenti
+        final_cols = [col for col in final_cols if col in combined_df.columns]
 
-st.markdown("---") 
-# --- RICERCA E STORICO INTERATTIVO (Mantenuto) ---
-st.markdown("## 🔎 Ricerca e Storico Servizi")
+        # Funzione di styling corretta (definita qui per accedere a final_cols)
+        def highlight_driver_client(row):
+            styles = []
+            driver_name = row['Autista']
+            color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
+            
+            # Itera solo sulle colonne definite in final_cols
+            for col in final_cols: 
+                if col in ['Autista', 'Cliente']:
+                    styles.append(f'background-color: {color}; color: white; font-weight: bold;')
+                else:
+                    styles.append('')
+            return styles
+        
+        # Applica lo stile al DataFrame e visualizza
+        st.dataframe(
+            combined_df[final_cols]
+            .style.apply(highlight_driver_client, axis=1)
+            .set_properties(**{'font-size': '10pt'})
+            , use_container_width=True
+        )
+    else:
+        st.info("Nessun cliente assegnato. La tabella è vuota.")
+    
+    st.markdown("---")
 
-tab1, tab2 = st.tabs(["🔍 Dettagli Cliente", "👤 Storico Autista"])
-
-assigned_drivers = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO']['Autista Assegnato'].unique().tolist()
-
-with tab1:
-     st.subheader("🔍 Dettagli Servizio per Cliente")
+    # --- RICERCA E STORICO INTERATTIVO (FIX INDENTATION) ---
+    st.markdown("## 🔎 Ricerca e Storico Servizi")
+    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
+    
+    # [FIX INDENTATION A RIGA 332]
+    with tab1:
+        st.subheader("🔍 Dettagli Servizio per Cliente")
         client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
         selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
         
@@ -349,7 +370,7 @@ with tab1:
                     st.markdown(f"**Tipo Veicolo Richiesto:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
             else:
                 st.info("Nessun dettaglio trovato per il cliente selezionato.")
-    
+
     with tab2:
         st.subheader("👤 Storico Servizi per Autista")
         driver_list = [''] + assigned_drivers
