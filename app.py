@@ -349,7 +349,7 @@ with tab1:
                     st.markdown(f"**Tipo Veicolo Richiesto:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
             else:
                 st.info("Nessun dettaglio trovato per il cliente selezionato.")
-
+    
     with tab2:
         st.subheader("👤 Storico Servizi per Autista")
         driver_list = [''] + assigned_drivers
