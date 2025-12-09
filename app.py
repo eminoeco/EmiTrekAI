@@ -305,8 +305,8 @@ else:
         # MOSTRA LA TABELLA BELLA
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
             # Download
-            csv = display_df.to_csv(index=False, encoding='utf-8-sig')
-            st.download_button(
+csv = display_df.to_csv(index=False, encoding='utf-8-sig')
+st.download_button(
                 label="Scarica Sequenza Operativa (Excel/CSV)",
                 data=csv,
                 file_name=f"Sequenza_FCO_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
