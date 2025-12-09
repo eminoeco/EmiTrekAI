@@ -374,7 +374,7 @@ with tab1:
             else:
                 st.info("Nessun dettaglio trovato per il cliente selezionato.")
 
-    with tab2:
+with tab2:
         st.subheader("👤 Storico Servizi per Autista")
         driver_list = [''] + assigned_drivers
         selected_driver_name = st.selectbox("Seleziona l'Autista da ricercare:", driver_list)
@@ -393,4 +393,4 @@ with tab1:
 
     # Pulsante per resettare e tornare al caricamento file
     st.markdown("---")
-    st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
+st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
