@@ -17,12 +17,16 @@ if 'processed_data' not in st.session_state:
     st.session_state['assegnazioni_complete'] = None
     st.session_state['flotta_risorse'] = None
 
-# --- MAPPATURA COLORI E EMOJI ---
+# --- MAPPATURA COLORI E EMOJI (ORA CON 7 COLORI DISTINTI) ---
 DRIVER_COLORS = {
-    'Andrea': '#4CAF50',  
-    'Carlo': '#2199F3',   
-    'Giulia': '#FFC107',  
-    'DEFAULT': '#B0BEC5' 
+    'Andrea': '#4CAF50',    # Verde
+    'Carlo': '#2199F3',     # Blu
+    'Giulia': '#FFC107',    # Giallo
+    'Marco': '#E91E63',     # Rosa/Fucsia
+    'Luca': '#00BCD4',      # Azzurro
+    'Sara': '#FF5722',      # Arancione
+    'Elena': '#673AB7',     # Viola
+    'DEFAULT': '#B0BEC5'    # Grigio
 }
 
 VEHICLE_EMOJIS = {
@@ -42,33 +46,29 @@ st.markdown(
     """
     <style>
     .stApp {
-        background-color: #F0F8FF; /* Alice Blue - Azzurrino Chiaro */
+        background-color: #F0F8FF;
     }
     .big-font {
-        font-size: 20px !important;
+        font-size:20px !important;
         font-weight: bold;
     }
-    
-    /* NUOVI STILI PER SCHEDE PIÙ PICCOLE */
     .card-title-font {
         font-size: 16px !important; 
         font-weight: bold;
-        margin-bottom: 5px; /* Spazio ridotto */
+        margin-bottom: 5px; 
     }
     .driver-card {
-        padding: 8px; /* Ridotto da 15px */
-        border-radius: 8px; /* Arrotondamento minore */
-        box-shadow: 1px 1px 5px rgba(0,0,0,0.1); /* Ombra più leggera */
-        margin-bottom: 8px; /* Ridotto da 15px */
-        line-height: 1.2; /* Linea più stretta */
-        height: 100%; /* Assicura che tutte le carte abbiano la stessa altezza, se necessario */
+        padding: 8px;
+        border-radius: 8px;
+        box-shadow: 1px 1px 5px rgba(0,0,0,0.1);
+        margin-bottom: 8px;
+        line-height: 1.2;
+        height: 100%;
     }
     .driver-card p {
-        font-size: 12px; /* Dettagli più piccoli */
-        margin: 0; /* Rimuove margini predefiniti */
+        font-size: 12px;
+        margin: 0;
     }
-    /* FINE NUOVI STILI */
-    
     div.stDataFrame {
         font-size: 12px;
     }
@@ -112,7 +112,6 @@ def calculate_end_time(row):
     except Exception:
         return time(0, 0)
 
-# --- LOGICA DI SALVATAGGIO DEI DATI CARICATI (Chiamata dal pulsante) ---
 def start_optimization(df_clienti, df_flotta):
     st.session_state['temp_df_clienti'] = df_clienti
     st.session_state['temp_df_flotta'] = df_flotta
@@ -120,7 +119,7 @@ def start_optimization(df_clienti, df_flotta):
 
 # --- LOGICA DI SCHEDULAZIONE (CORE) ---
 def run_scheduling(df_clienti, df_flotta):
-    # Logica di assegnazione (completa)
+    
     assegnazioni_df = df_clienti.copy()
     assegnazioni_df['ID Veicolo Assegnato'] = np.nan
     assegnazioni_df['Autista Assegnato'] = np.nan
@@ -129,7 +128,6 @@ def run_scheduling(df_clienti, df_flotta):
     assegnazioni_df['Ritardo Prelievo (min)'] = 0 
     
     df_risorse = df_flotta.copy()
-    
     df_risorse['Prossima Disponibilità'] = df_risorse['Disponibile Da (hh:mm)'].apply(to_time)
     df_risorse['Disponibile Fino (hh:mm)'] = df_risorse['Disponibile Fino (hh:mm)'].apply(to_time)
     df_risorse['Tipo Veicolo'] = df_risorse['Tipo Veicolo'].astype(str).str.capitalize()
@@ -160,8 +158,11 @@ def run_scheduling(df_clienti, df_flotta):
         
         tempo_richiesto_min = time_to_minutes(ora_richiesta)
         
+        # FIX LOGICA: Ordina per minima Prossima Disponibilità per distribuire il carico
         candidati_validi['Ritardo Min'] = (candidati_validi['Prossima Disponibilità'].apply(time_to_minutes) - tempo_richiesto_min).clip(lower=0)
-        risorsa_assegnata = candidati_validi.sort_values(by='Ritardo Min').iloc[0]
+        
+        # Ordina prima per ritardo (minimo ritardo) e poi per Prossima Disponibilità (chi si libera prima)
+        risorsa_assegnata = candidati_validi.sort_values(by=['Ritardo Min', 'Prossima Disponibilità']).iloc[0] 
         
         ritardo_minuti = int(risorsa_assegnata['Ritardo Min']) 
         
@@ -260,7 +261,6 @@ else:
     st.subheader("🧑‍✈️ I Nostri Operatori NCC")
     
     drivers_unique = df_risorse['Autista'].unique()
-    # Usiamo un numero massimo di colonne per evitare che diventino troppo sottili con molti autisti, Streamlit le gestirà
     drivers_overview_cols = st.columns(len(drivers_unique)) 
     
     for i, driver in enumerate(drivers_unique):
@@ -332,7 +332,7 @@ else:
         # APPLICA IL COLORE
         styled_df = display_df.style.apply(color_autista, axis=1)
 
-        # MOSTRA LA TABELLA BELLA (FIX INDENTAZIONE + FIX STYLING)
+        # MOSTRA LA TABELLA BELLA (FIX: Indentazione + hide_index=True)
         st.dataframe(styled_df, use_container_width=True, hide_index=True)
         
         # Download
@@ -412,7 +412,6 @@ else:
                     mime="application/pdf"
                 )
             except ImportError:
-                # Questo blocco è necessario solo se reportlab non è installato
                 pass 
 
             # Excel
