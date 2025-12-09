@@ -265,62 +265,48 @@ else:
 
     st.markdown("---")
 
-       # --- SEQUENZA OPERATIVA UNIFICATA – VERSIONE INDESTRUCTIBLE ---
+          # --- SEQUENZA OPERATIVA UNIFICATA – VERSIONE INDESTRUCTIBLE 100% ---
     st.markdown("## Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
     
     if assigned_df.empty:
         st.info("Nessun servizio assegnato con successo.")
-    else:
-        # Normalizza i possibili nomi delle colonne più comuni
-        col_map = {
-            'Indirizzo Prelievo': 'Indirizzo Prelievo',
-            'Indirizzo di Prelievo': 'Indirizzo Prelievo',
-            'Indirizzo di prelievo': 'Indirizzo Prelievo',
-            'Luogo Prelievo': 'Indirizzo Prelievo',
-            'Destinazione Finale': 'Destinazione Finale',
-            'Destinazione': 'Destinazione Finale',
-            'Ora Arrivo': 'Ora Arrivo',
-            'Ora di arrivo': 'Ora Arrivo',
-            'ID Prenotazione': 'ID Prenotazione',
-            'Codice Prenotazione': 'ID Prenotazione',
+        st.stop()
+
+    # Calcola ora fine servizio
+    assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
+
+    # Costruisci il DataFrame da mostrare – con controlli sicuri al 100%
+    display_df = pd.DataFrame({
+        {
+            'Autista'         : assigned_df['Autista Assegnato'].fillna('—'),
+            'Cliente'         : assigned_df.get('ID Prenotazione', pd.Series('—', index=assigned_df.index)),
+            'Partenza'        : assigned_df.get('Indirizzo Prelievo', pd.Series('—', index=assigned_df.index))
+                                .fillna('—'),
+            'Ora Partenza'    : assigned_df['Ora Effettiva Prelievo'].apply(
+                lambda x: x.strftime('%H:%M') if pd.notna(x) else '—'
+            ),
+            'Arrivo'          : assigned_df.get('Destinazione Finale', pd.Series('—', index=assigned_df.index))
+                                .fillna('—'),
+            'Ora Arrivo'      : assigned_df['Ora Fine Servizio'].apply(
+                lambda x: x.strftime('%H:%M') if pd.notna(x) else '—'
+            ),
+            'Ritardo (min)'   : assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
+            'Veicolo'         : assigned_df['Tipo Veicolo Richiesto'].astype(str).apply(
+                lambda x: VEHICLE_EMOJIS.get(x.strip().title(), 'Veicolo') + ' ' + x.strip().title()
+            ),
+            'Durata (min)'    : assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
         }
-        
-        # Rinomina solo se la colonna esiste
-        for old, new in col_map.items():
-            if old in assigned_df.columns:
-                assigned_df = assigned_df.rename(columns={old: new})
-        
-        # Calcola ora fine servizio
-        assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
-        
-        # Costruisci il DataFrame da mostrare (con fallback sicuri)
-        display_df = pd.DataFrame({
-            'Autista': assigned_df['Autista Assegnato'].fillna('—'),
-            'Cliente': assigned_df.get('ID Prenotazione', assigned_df.index).fillna('—'),
-            'Partenza': assigned_df.get('Indirizzo Prelievo', '—').fillna('—'),
-            'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].apply(
-                lambda t: t.strftime('%H:%M') if isinstance(t, time) else '—'
-            ),
-            'Arrivo': assigned_df.get('Destinazione Finale', '—').fillna('—'),
-            'Ora Arrivo': assigned_df['Ora Fine Servizio'].apply(
-                lambda t: t.strftime('%H:%M') if isinstance(t, time) else '—'
-            ),
-            'Ritardo (min)': assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
-            'Veicolo': assigned_df['Tipo Veicolo Richiesto'].apply(
-                lambda x: VEHICLE_EMOJIS.get(str(x).strip().title(), 'Veicolo') + ' ' + str(x).strip().title()
-            ),
-            'Durata (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
-        })
-        
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
-        
-        # Download
-        csv = display_df.to_csv(index=False, encoding='utf-8')
-        st.download_button(
-            label="Scarica Sequenza Operativa (Excel/CSV)",
-            data=csv,
-            file_name=f"Sequenza_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv"
-        )
+
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    # Download immediato
+    csv = display_df.to_csv(index=False, encoding='utf-8-sig')
+    st.download_button(
+        label="Scarica Sequenza Operativa (Excel/CSV)",
+        data=csv,
+        file_name=f"Sequenza_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+        use_container_width=True
+    )
