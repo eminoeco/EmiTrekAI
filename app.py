@@ -303,7 +303,7 @@ else:
         styled_df = display_df.style.apply(color_autista, axis=1)
 
         # MOSTRA LA TABELLA BELLA
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)_index=True)
     
             # Download
             csv = display_df.to_csv(index=False, encoding='utf-8-sig')
