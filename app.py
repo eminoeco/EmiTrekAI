@@ -196,36 +196,40 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['processed_data'] = True
     st.rerun()
 
-# --- FUNZIONE RATIONALE AI (NUOVA FUNZIONE) ---
+# --- FUNZIONE RATIONALE AI (ORA PIÙ UMANO) ---
 def generate_ai_report_explanation(driver_df, driver_name, df_risorse):
     
     driver_info = df_risorse[df_risorse['Autista'] == driver_name].iloc[0]
     vehicle_type = driver_info['Tipo Veicolo']
     
     if driver_df.empty:
-        return f"L'autista {driver_name} non ha servizi assegnati in questa sequenza operativa. Il suo veicolo ({vehicle_type}) era pronto, ma le richieste necessarie erano già state soddisfatte da altri colleghi o l'autista non era disponibile negli orari di picco."
+        return f"**Spiegazione Semplice per {driver_name}:**\n\nNon abbiamo trovato servizi adatti per te e il tuo veicolo ({vehicle_type}) in questa sequenza operativa. Questo è successo perché tutte le corse compatibili sono state assegnate ai tuoi colleghi per **bilanciare il lavoro** al meglio."
     
     total_services = driver_df.shape[0]
     total_duration = driver_df['Durata Servizio (min)'].sum()
     max_ritardo = driver_df['Ritardo (min)'].max()
     next_available = driver_info['Prossima Disponibilità'].strftime('%H:%M')
     
-    report = f"### 🤖 Rationale di Assegnazione per l'Autista {driver_name}\n\n"
-    report += f"L'algoritmo ha assegnato **{total_services} servizi** a {driver_name}, per una durata complessiva di **{total_duration} minuti**.\n\n"
+    # Inizio Rationale Umanizzato
+    report = f"### 💡 Spiegazione delle Scelte (AI Rationale) per {driver_name}\n\n"
+    report += f"Ciao {driver_name}, per oggi ti abbiamo organizzato **{total_services} servizi** che ti impegneranno per circa **{total_duration} minuti** totali.\n\n"
     
     # Rationale sui servizi (basato sul veicolo e sul bilanciamento)
     colleagues = df_risorse[(df_risorse['Tipo Veicolo'] == vehicle_type) & (df_risorse['Autista'] != driver_name)]['Autista'].tolist()
     
-    report += f"**Tipo di Veicolo**: {driver_name} guida un veicolo **{vehicle_type}**. È stato selezionato per soddisfare le richieste di questo veicolo, in un'ottica di **bilanciamento del carico** con i colleghi che guidano lo stesso tipo di veicolo ({', '.join(colleagues)}).\n\n"
+    report += f"**Perché tu e il tuo veicolo?** Guidi una **{vehicle_type}**. Ti abbiamo scelto per queste corse perché il sistema ha l'obiettivo di **dividere il lavoro in modo equo** tra tutti gli autisti con un mezzo simile ({', '.join(colleagues)}).\n\n"
         
     # Rationale sui ritardi
     if max_ritardo > 0:
-        report += f"**Gestione del Tempo**: Il ritardo massimo registrato è stato di **{max_ritardo} minuti** (nel servizio con ID {driver_df.iloc[0]['Cliente']} che ha richiesto il ritardo). Questo ritardo indica che la risorsa era già impegnata in un servizio precedente, ma è stata comunque la scelta ottimale per bilanciare il carico e minimizzare il disservizio.\n\n"
-    else:
-        report += f"**Gestione del Tempo**: Tutti i servizi di {driver_name} sono stati assegnati con un ritardo minimo (0 minuti rispetto all'ora richiesta), il che indica un'ottima finestra di disponibilità per l'autista nel momento della richiesta.\n\n"
+        # Trova il cliente con il ritardo massimo per dare un esempio concreto
+        client_id_with_max_delay = driver_df[driver_df['Ritardo (min)'] == max_ritardo].iloc[0]['Cliente']
         
-    # Conclusione
-    report += f"**Disponibilità**: L'orario di fine servizio stimato per {driver_name} è alle **{next_available}**. Dopo tale orario, {driver_name} sarà nuovamente disponibile per nuovi incarichi, fino alla fine del turno (19:00)."
+        report += f"**Attenzione agli Orari:** Per la corsa con Cliente ID **{client_id_with_max_delay}**, c'è un ritardo massimo di **{max_ritardo} minuti** rispetto all'orario richiesto dal cliente. Ti abbiamo assegnato il servizio comunque perché, pur essendo occupato, eri la scelta migliore per non sovraccaricare troppo i tuoi colleghi. Segui l'Ora Partenza indicata nella tabella!\n\n"
+    else:
+        report += f"**Attenzione agli Orari:** Perfetto! Tutti i tuoi servizi sono stati programmati **senza ritardi** rispetto all'orario richiesto dai clienti. Partirai subito dopo aver finito la corsa precedente.\n\n"
+        
+    # Conclusione (RIMOSSO RIFERIMENTO A 19:00)
+    report += f"**Quando hai finito?** L'ultima corsa assegnata terminerà circa alle **{next_available}**. Dopo quell'orario, sarai pronto per qualsiasi nuova richiesta arrivi."
     
     return report
 
@@ -378,7 +382,7 @@ else:
     st.markdown("---")
 
     # =============================================================================
-    # REPORT INDIVIDUALE AUTISTA (CON RATIONALE AI)
+    # REPORT INDIVIDUALE AUTISTA (CON RATIONALE AI UMANIZZATO)
     # =============================================================================
     st.subheader("Report Individuale Autista")
 
@@ -403,7 +407,7 @@ else:
 
             st.dataframe(driver_df, use_container_width=True, hide_index=False)
             
-            # AGGIUNGI IL REPORT AI ESPLICATIVO
+            # AGGIUNGI IL REPORT AI ESPLICATIVO (UMANIZZATO)
             report_explanation = generate_ai_report_explanation(driver_df, selected_driver, df_risorse)
             st.info(report_explanation) # Usa st.info per un effetto 'pop-up' style box
 
