@@ -196,40 +196,61 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['processed_data'] = True
     st.rerun()
 
-# --- FUNZIONE RATIONALE AI (ORA PIÙ UMANO) ---
+# --- FUNZIONE RATIONALE AI (VOS: RIEPILOGO ANALITICO E PROFESSIONALE) ---
 def generate_ai_report_explanation(driver_df, driver_name, df_risorse):
     
     driver_info = df_risorse[df_risorse['Autista'] == driver_name].iloc[0]
     vehicle_type = driver_info['Tipo Veicolo']
     
+    # Nuovo titolo: VOS - Virtual Operations Summary
+    report = f"### 📊 VOS: Riepilogo Analitico Operatore {driver_name}\n\n"
+    
     if driver_df.empty:
-        return f"**Spiegazione Semplice per {driver_name}:**\n\nNon abbiamo trovato servizi adatti per te e il tuo veicolo ({vehicle_type}) in questa sequenza operativa. Questo è successo perché tutte le corse compatibili sono state assegnate ai tuoi colleghi per **bilanciare il lavoro** al meglio."
+        colleagues = df_risorse[df_risorse['Tipo Veicolo'] == vehicle_type]['Autista'].tolist()
+        colleagues.remove(driver_name)
+        
+        return (f"{report}"
+                f"**Analisi Status:** L'Operatore {driver_name} non è stato assegnato a servizi in questa sequenza operativa.\n"
+                f"**Motivazione:** Nonostante la disponibilità del veicolo **{vehicle_type}**, la mancanza di servizi è dovuta alla logica di **bilanciamento del carico**. Le richieste compatibili sono state prioritariamente distribuite tra i colleghi ({', '.join(colleagues)}) per garantire un'equa ripartizione del lavoro.")
+
     
     total_services = driver_df.shape[0]
     total_duration = driver_df['Durata Servizio (min)'].sum()
-    max_ritardo = driver_df['Ritardo (min)'].max()
     next_available = driver_info['Prossima Disponibilità'].strftime('%H:%M')
     
-    # Inizio Rationale Umanizzato
-    report = f"### 💡 Spiegazione delle Scelte (AI Rationale) per {driver_name}\n\n"
-    report += f"Ciao {driver_name}, per oggi ti abbiamo organizzato **{total_services} servizi** che ti impegneranno per circa **{total_duration} minuti** totali.\n\n"
     
-    # Rationale sui servizi (basato sul veicolo e sul bilanciamento)
-    colleagues = df_risorse[(df_risorse['Tipo Veicolo'] == vehicle_type) & (df_risorse['Autista'] != driver_name)]['Autista'].tolist()
+    report += f"**Riepilogo Assegnazioni:** {driver_name} ha ricevuto **{total_services} servizi** per un impegno totale di **{total_duration} minuti** con il veicolo **{vehicle_type}**.\n\n"
     
-    report += f"**Perché tu e il tuo veicolo?** Guidi una **{vehicle_type}**. Ti abbiamo scelto per queste corse perché il sistema ha l'obiettivo di **dividere il lavoro in modo equo** tra tutti gli autisti con un mezzo simile ({', '.join(colleagues)}).\n\n"
+    # Spiegazione logica di scheduling
+    report += f"**Logica di Scheduling (Load Balancing):** L'allocazione è stata ottimizzata scegliendo la risorsa con il **minore carico di lavoro** tra i candidati idonei (stesso veicolo e minimo ritardo), assicurando così la distribuzione più equa possibile.\n\n"
+    
+    report += "**Sequenza Operativa Passaggio-per-Passaggio:**\n"
+    
+    previous_end_time = None
+    
+    # Dettaglio sequenza operativa
+    for i, row in driver_df.iterrows():
+        ora_partenza = row['Ora Partenza']
+        ora_arrivo = row['Ora Arrivo']
+        ritardo = row['Ritardo (min)']
+        cliente = row['Cliente']
+        destinazione = row['Arrivo']
         
-    # Rationale sui ritardi
-    if max_ritardo > 0:
-        # Trova il cliente con il ritardo massimo per dare un esempio concreto
-        client_id_with_max_delay = driver_df[driver_df['Ritardo (min)'] == max_ritardo].iloc[0]['Cliente']
+        step_description = f"{i}. Cliente **{cliente}** (da {row['Partenza']} a {destinazione}):"
         
-        report += f"**Attenzione agli Orari:** Per la corsa con Cliente ID **{client_id_with_max_delay}**, c'è un ritardo massimo di **{max_ritardo} minuti** rispetto all'orario richiesto dal cliente. Ti abbiamo assegnato il servizio comunque perché, pur essendo occupato, eri la scelta migliore per non sovraccaricare troppo i tuoi colleghi. Segui l'Ora Partenza indicata nella tabella!\n\n"
-    else:
-        report += f"**Attenzione agli Orari:** Perfetto! Tutti i tuoi servizi sono stati programmati **senza ritardi** rispetto all'orario richiesto dai clienti. Partirai subito dopo aver finito la corsa precedente.\n\n"
+        if ritardo > 0:
+            step_description += f" Partenza Effettiva: **{ora_partenza}** (Ritardo di {ritardo} min). Fine Servizio Stimata: {ora_arrivo}.\n"
+        elif previous_end_time is None:
+            # Primo servizio
+            step_description += f" Inizio attività. Partenza Effettiva: **{ora_partenza}**. Fine Servizio Stimata: {ora_arrivo}.\n"
+        else:
+            # Servizi successivi senza ritardo (parte subito)
+             step_description += f" Transito immediato. Partenza Effettiva: **{ora_partenza}**. Fine Servizio Stimata: {ora_arrivo}.\n"
+             
+        report += step_description
+        previous_end_time = ora_arrivo
         
-    # Conclusione (RIMOSSO RIFERIMENTO A 19:00)
-    report += f"**Quando hai finito?** L'ultima corsa assegnata terminerà circa alle **{next_available}**. Dopo quell'orario, sarai pronto per qualsiasi nuova richiesta arrivi."
+    report += f"\n**Disponibilità Prevista:** L'operatore {driver_name} risulterà nuovamente disponibile per eventuali nuove richieste a partire dalle ore **{next_available}**."
     
     return report
 
@@ -407,7 +428,7 @@ else:
 
             st.dataframe(driver_df, use_container_width=True, hide_index=False)
             
-            # AGGIUNGI IL REPORT AI ESPLICATIVO (UMANIZZATO)
+            # AGGIUNGI IL REPORT AI ESPLICATIVO (VOS)
             report_explanation = generate_ai_report_explanation(driver_df, selected_driver, df_risorse)
             st.info(report_explanation) # Usa st.info per un effetto 'pop-up' style box
 
