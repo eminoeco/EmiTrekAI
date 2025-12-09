@@ -265,99 +265,62 @@ else:
 
     st.markdown("---")
 
-    # --- SEQUENZA OPERATIVA UNIFICATA (FIX COMPLETO: NUOVO DataFrame SENZA STYLER) ---
-    st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
+       # --- SEQUENZA OPERATIVA UNIFICATA – VERSIONE INDESTRUCTIBLE ---
+    st.markdown("## Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
-
-    if not assigned_df.empty:
-        # Resetta indice SENZA inplace=True (evita modifica in-place)
-        assigned_df = assigned_df.reset_index(drop=True)
+    
+    if assigned_df.empty:
+        st.info("Nessun servizio assegnato con successo.")
+    else:
+        # Normalizza i possibili nomi delle colonne più comuni
+        col_map = {
+            'Indirizzo Prelievo': 'Indirizzo Prelievo',
+            'Indirizzo di Prelievo': 'Indirizzo Prelievo',
+            'Indirizzo di prelievo': 'Indirizzo Prelievo',
+            'Luogo Prelievo': 'Indirizzo Prelievo',
+            'Destinazione Finale': 'Destinazione Finale',
+            'Destinazione': 'Destinazione Finale',
+            'Ora Arrivo': 'Ora Arrivo',
+            'Ora di arrivo': 'Ora Arrivo',
+            'ID Prenotazione': 'ID Prenotazione',
+            'Codice Prenotazione': 'ID Prenotazione',
+        }
         
-        # Calcola l'Ora di Fine Servizio
+        # Rinomina solo se la colonna esiste
+        for old, new in col_map.items():
+            if old in assigned_df.columns:
+                assigned_df = assigned_df.rename(columns={old: new})
+        
+        # Calcola ora fine servizio
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
         
-        # Crea NUOVO DataFrame con colonne fisse (NO rename o filter - evita mismatch)
+        # Costruisci il DataFrame da mostrare (con fallback sicuri)
         display_df = pd.DataFrame({
-            'Autista': assigned_df['Autista Assegnato'].fillna('N/A'),
-            'Cliente': assigned_df['ID Prenotazione'].fillna('N/A'),
-            'Partenza': assigned_df['Indirizzo Prelievo'].fillna('N/A'),
-            'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].apply(lambda t: t.strftime('%H:%M') if isinstance(t, time) else str(t)),
-            'Arrivo': assigned_df['Destinazione Finale'].fillna('N/A'),
-            'Ora Arrivo': assigned_df['Ora Fine Servizio'].apply(lambda t: t.strftime('%H:%M') if isinstance(t, time) else str(t)),
+            'Autista': assigned_df['Autista Assegnato'].fillna('—'),
+            'Cliente': assigned_df.get('ID Prenotazione', assigned_df.index).fillna('—'),
+            'Partenza': assigned_df.get('Indirizzo Prelievo', '—').fillna('—'),
+            'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].apply(
+                lambda t: t.strftime('%H:%M') if isinstance(t, time) else '—'
+            ),
+            'Arrivo': assigned_df.get('Destinazione Finale', '—').fillna('—'),
+            'Ora Arrivo': assigned_df['Ora Fine Servizio'].apply(
+                lambda t: t.strftime('%H:%M') if isinstance(t, time) else '—'
+            ),
             'Ritardo (min)': assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
             'Veicolo': assigned_df['Tipo Veicolo Richiesto'].apply(
-                lambda x: VEHICLE_EMOJIS.get(str(x).strip().title(), '❓') + ' ' + str(x).strip().title()
+                lambda x: VEHICLE_EMOJIS.get(str(x).strip().title(), 'Veicolo') + ' ' + str(x).strip().title()
             ),
-            'Durata (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int)
+            'Durata (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
         })
         
-        # Visualizza SENZA .style o filtri (direttamente il DataFrame nuovo)
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        # Bonus: Download Excel
-        csv = display_df.to_csv(index=False).encode('utf-8')
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        
+        # Download
+        csv = display_df.to_csv(index=False, encoding='utf-8')
         st.download_button(
-            label="📥 Scarica Sequenza Operativa (CSV/Excel)",
+            label="Scarica Sequenza Operativa (Excel/CSV)",
             data=csv,
-            file_name=f"Sequenza_Operativa_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"Sequenza_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
         )
-    else:
-        st.info("Nessun cliente assegnato. La tabella è vuota.")
-    
-    st.markdown("---")
-
-    # --- RICERCA E STORICO INTERATTIVO ---
-    st.markdown("## 🔎 Ricerca e Storico Servizi")
-    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
-    
-    with tab1:
-        st.subheader("🔍 Dettagli Servizio per Cliente")
-        client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
-        selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
-        
-        if selected_client_id:
-            client_details = assegnazioni_df[assegnazioni_df['ID Prenotazione'] == selected_client_id]
-            if not client_details.empty:
-                detail_row = client_details.iloc[0]
-                status_emoji = STATUS_EMOJIS.get(detail_row['Stato Assegnazione'], '')
-                st.markdown(f"**Cliente:** {detail_row['ID Prenotazione']}")
-                st.markdown(f"**Stato:** {detail_row['Stato Assegnazione']} {status_emoji}")
-                if detail_row['Stato Assegnazione'] == 'ASSEGNATO':
-                    st.markdown(f"**Ora di Prelievo Effettiva:** {detail_row['Ora Effettiva Prelievo'].strftime('%H:%M')}")
-                    st.markdown(f"**Autista Assegnato:** {detail_row['Autista Assegnato']}")
-                    st.markdown(f"**Veicolo:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
-                    st.markdown(f"**Ritardo Prelievo:** {detail_row['Ritardo Prelievo (min)']} minuti")
-                else:
-                    st.markdown(f"**Ora di Prelievo Richiesta:** {detail_row['Ora Prelievo Richiesta'].strftime('%H:%M')}")
-                    st.markdown(f"**Tipo Veicolo Richiesto:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
-            else:
-                st.info("Nessun dettaglio trovato per il cliente selezionato.")
-
-    with tab2:
-        st.subheader("👤 Storico Servizi per Autista")
-        assigned_drivers = assigned_df['Autista'].dropna().unique().tolist() 
-        driver_list = [''] + assigned_drivers
-        selected_driver_name = st.selectbox("Seleziona l'Autista da ricercare:", driver_list)
-        
-        if selected_driver_name:
-            driver_history = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == selected_driver_name]
-            if not driver_history.empty:
-                # Visualizza senza .style (usa markdown per colore)
-                history_df = driver_history[[
-                    'ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
-                    'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione'
-                ]].copy()
-                history_df['ID Prenotazione'] = history_df['ID Prenotazione'].apply(lambda x: f"<span style='background-color: {DRIVER_COLORS.get(selected_driver_name, DRIVER_COLORS['DEFAULT'])}; color: white; padding: 2px; border-radius: 3px;'>{x}</span>")
-                st.markdown(history_df.to_html(escape=False), unsafe_allow_html=True)
-            else:
-                st.info("Nessun servizio assegnato a questo autista.")
-
-    # Pulsante per resettare e tornare al caricamento file
-    st.markdown("---")
-    st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
