@@ -344,7 +344,7 @@ st.markdown("---")
     # --- RICERCA E STORICO INTERATTIVO ---
 # ... (Fine del blocco IF/ELSE che genera la tabella) ...
     
-    st.markdown("---")
+st.markdown("---")
 
     # QUESTE RIGHE DEVONO AVERE UNA SOLA INDENTAZIONE RISPETTO A 'else:'
     st.markdown("## 🔎 Ricerca e Storico Servizi")
