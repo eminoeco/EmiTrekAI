@@ -263,7 +263,7 @@ else:
 
     st.markdown("---")
 
-    # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA (FIX STYLING E KEYERROR) ---
+    # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA (Styling Rimosso) ---
     st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
@@ -301,21 +301,10 @@ else:
         # Filtra solo le colonne esistenti
         final_cols = [col for col in final_cols if col in combined_df.columns]
         
-        # Funzione di styling stabile (ritorna uno stile per tutta la riga)
-        def color_assigned_row(row):
-            driver_name = row['Autista']
-            color = DRIVER_COLORS.get(driver_name, DRIVER_COLORS['DEFAULT'])
-            
-            # Applica lo stile solo alle colonne Autista e Cliente
-            return ['background-color: %s; color: white; font-weight: bold;' % color 
-                    if col in ['Autista', 'Cliente'] else '' for col in final_cols] # Usa final_cols qui
-
-        # Visualizzazione con stile stabile (FIX: Usiamo solo le colonne filtrate)
+        # Visualizzazione SENZA styling complesso (la causa di tutti i problemi)
         st.dataframe(
-            combined_df[final_cols]
-            .style.apply(color_assigned_row, axis=1)
-            .set_properties(**{'font-size': '10pt'})
-            , use_container_width=True
+            combined_df[final_cols],
+            use_container_width=True
         )
     else:
         st.info("Nessun cliente assegnato. La tabella è vuota.")
@@ -351,7 +340,6 @@ else:
 
     with tab2:
         st.subheader("👤 Storico Servizi per Autista")
-        # Deve essere definita assigned_drivers. Se non è definita, la definiamo qui:
         assigned_drivers = assigned_df['Autista'].dropna().unique().tolist() 
         driver_list = [''] + assigned_drivers
         selected_driver_name = st.selectbox("Seleziona l'Autista da ricercare:", driver_list)
