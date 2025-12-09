@@ -14,10 +14,10 @@ if 'processed_data' not in st.session_state:
 
 # --- MAPPATURA COLORI E EMOJI ---
 DRIVER_COLORS = {
-    'Andrea': '#4CAF50',  # Verde
-    'Carlo': '#2199F3',   # Blu
-    'Giulia': '#FFC107',  # Giallo-Arancio
-    'DEFAULT': '#B0BEC5'
+    'Andrea': '#4CAF50',  
+    'Carlo': '#2199F3',   
+    'Giulia': '#FFC107',  
+    'DEFAULT': '#B0BEC5' 
 }
 
 VEHICLE_EMOJIS = {
@@ -49,7 +49,6 @@ st.markdown(
         box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
         margin-bottom: 15px;
     }
-    /* Rende il dataframe più compatto */
     div.stDataFrame {
         font-size: 12px;
     }
@@ -59,7 +58,7 @@ st.markdown(
 )
 # -----------------------------------------------------------------------------
 
-# --- FUNZIONI DI SUPPORTO (OMESSE PER BREVITÀ) ---
+# --- FUNZIONI DI SUPPORTO ---
 def read_excel_file(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -264,12 +263,15 @@ else:
 
     st.markdown("---")
 
-    # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA (FIX STYLING) ---
+    # --- NUOVA SEZIONE: SEQUENZA OPERATIVA UNIFICATA E COMPATTA (FIX STYLING E KEYERROR) ---
     st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
 
     if not assigned_df.empty:
+        # FIX: Resetta l'indice per eliminare l'errore Styler.apply
+        assigned_df.reset_index(drop=True, inplace=True)
+        
         # Calcola l'Ora di Fine Servizio (Ora Arrivo)
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
         
@@ -299,20 +301,6 @@ else:
         # Filtra solo le colonne esistenti
         final_cols = [col for col in final_cols if col in combined_df.columns]
         
-        # --- STYLING SEMPLIFICATO (SENZA applymap COMPLESSO) ---
-        # 1. Stile base per Autista e Cliente (colore)
-        def highlight_driver_col(series, col_name):
-            color_map = series['Autista'].map(lambda x: DRIVER_COLORS.get(x, DRIVER_COLORS['DEFAULT']))
-            is_target = series.index.get_loc(col_name) # Ottieni l'indice della colonna
-            
-            # Crea un array di stili, applica solo alla colonna target
-            styles = ['' for _ in series]
-            if col_name in ['Autista', 'Cliente']:
-                styles[is_target] = f'background-color: {color_map[is_target]}; color: white; font-weight: bold;'
-            return styles
-        
-        # Questo è il punto che dava errore. Lo semplifichiamo.
-        
         # Funzione di styling stabile (ritorna uno stile per tutta la riga)
         def color_assigned_row(row):
             driver_name = row['Autista']
@@ -320,12 +308,12 @@ else:
             
             # Applica lo stile solo alle colonne Autista e Cliente
             return ['background-color: %s; color: white; font-weight: bold;' % color 
-                    if col in ['Autista', 'Cliente'] else '' for col in row.index]
+                    if col in ['Autista', 'Cliente'] else '' for col in final_cols] # Usa final_cols qui
 
-        # Visualizzazione con stile stabile
+        # Visualizzazione con stile stabile (FIX: Usiamo solo le colonne filtrate)
         st.dataframe(
             combined_df[final_cols]
-            .style.apply(color_assigned_row, axis=1) # Usiamo la funzione stabile
+            .style.apply(color_assigned_row, axis=1)
             .set_properties(**{'font-size': '10pt'})
             , use_container_width=True
         )
@@ -334,7 +322,7 @@ else:
     
     st.markdown("---")
 
-    # --- RICERCA E STORICO INTERATTIVO (Mantenuto per completezza) ---
+    # --- RICERCA E STORICO INTERATTIVO ---
     st.markdown("## 🔎 Ricerca e Storico Servizi")
     tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
