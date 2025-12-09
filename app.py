@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, time, timedelta
 import numpy as np
+from io import BytesIO
 
 # FIX PER STREAMLIT CLOUD: disabilita warning e chained assignment
 pd.options.mode.chained_assignment = None
@@ -62,7 +63,7 @@ st.markdown(
 )
 # -----------------------------------------------------------------------------
 
-# --- FUNZIONI DI SUPPORTO ---
+# --- FUNZIONI DI SUPPORTO (OMESSE PER BREVITÀ) ---
 def read_excel_file(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -265,66 +266,73 @@ else:
 
     st.markdown("---")
 
-      # --- SEQUENZA OPERATIVA CON COLORE AUTISTA COME SOPRA ---
-    st.markdown("## Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
-    
+    # --- PREPARAZIONE DATAFRAME DI VISUALIZZAZIONE (DEFINITO UNA SOLA VOLTA) ---
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
-    
-    if assigned_df.empty:
-        st.info("Nessun servizio assegnato con successo.")
-    else:
-        assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
 
-        # DataFrame finale
+    # Inizializza display_df come DataFrame vuoto per evitare NameError nel blocco download
+    if assigned_df.empty:
+        # Se non ci sono assegnazioni, crea un DataFrame vuoto con le colonne corrette
+        display_df = pd.DataFrame(columns=[
+            'Autista', 'Cliente', 'Partenza', 'Ora Partenza', 
+            'Arrivo', 'Ora Arrivo', 'Ritardo (min)', 'Veicolo', 'Durata Servizio (min)'
+        ])
+    else:
+        assigned_df.reset_index(drop=True, inplace=True)
+        assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
+        
         display_df = pd.DataFrame({
-            'Autista'              : assigned_df['Autista Assegnato'].fillna('-'),
-            'Cliente'              : assigned_df.get('ID Prenotazione', pd.Series('-', index=assigned_df.index)),
-            'Partenza'             : 'FCO',
-            'Ora Partenza'         : assigned_df['Ora Effettiva Prelievo'].apply(
+            'Autista': assigned_df['Autista Assegnato'].fillna('-'),
+            'Cliente': assigned_df.get('ID Prenotazione', pd.Series('-', index=assigned_df.index)),
+            'Partenza': assigned_df.get('Indirizzo Prelievo', pd.Series('FCO', index=assigned_df.index)).fillna('FCO'),
+            'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].apply(
                 lambda x: x.strftime('%H:%M') if pd.notna(x) and hasattr(x, 'strftime') else '-'
             ),
-            'Arrivo'               : assigned_df.get('Destinazione Finale', pd.Series('-', index=assigned_df.index)).fillna('-'),
-            'Ora Arrivo'           : assigned_df['Ora Fine Servizio'].apply(
+            'Arrivo': assigned_df.get('Destinazione Finale', pd.Series('-', index=assigned_df.index)).fillna('-'),
+            'Ora Arrivo': assigned_df['Ora Fine Servizio'].apply(
                 lambda x: x.strftime('%H:%M') if pd.notna(x) and hasattr(x, 'strftime') else '-'
             ),
-            'Ritardo (min)'        : assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
-            'Veicolo'              : assigned_df['Tipo Veicolo Richiesto'].astype(str).apply(
-                lambda x: VEHICLE_EMOJIS.get(x.strip().title(), 'Veicolo') + ' ' + x.strip().title()
+            'Ritardo (min)': assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
+            'Veicolo': assigned_df['Tipo Veicolo Richiesto'].astype(str).apply(
+                lambda x: VEHICLE_EMOJIS.get(x.strip().title(), '❓') + ' ' + x.strip().title()
             ),
             'Durata Servizio (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
         })
 
-        # FUNZIONE DI COLORAZIONE
+    # --- SEZIONE DI VISUALIZZAZIONE DELLA TABELLA ---
+    st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
+
+    if display_df.empty:
+        st.info("Nessun servizio assegnato con successo.")
+    else:
+        # Funzione di colorazione (stile semplificato, solo Autista)
         def color_autista(row):
             colore = DRIVER_COLORS.get(row['Autista'], DRIVER_COLORS['DEFAULT'])
+            # Applica lo stile solo alla colonna 'Autista'
             return [f'background-color: {colore}; color: white' if col == 'Autista' else '' for col in display_df.columns]
 
         # APPLICA IL COLORE
         styled_df = display_df.style.apply(color_autista, axis=1)
 
-        # MOSTRA LA TABELLA BELLA
-st.dataframe(styled_df, use_container_width=True, hide_index=True)
-            # Download
-csv = display_df.to_csv(index=False, encoding='utf-8-sig')
-st.download_button(
-                label="Scarica Sequenza Operativa (Excel/CSV)",
-                data=csv,
-                file_name=f"Sequenza_FCO_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                mime="text/csv"
-            )
+        # MOSTRA LA TABELLA BELLA (FIX INDENTAZIONE + FIX STYLING)
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+        
+        # Download
+        csv = display_df.to_csv(index=False, encoding='utf-8-sig')
+        st.download_button(
+            label="Scarica Sequenza Operativa (CSV)",
+            data=csv,
+            file_name=f"Sequenza_FCO_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            mime="text/csv"
+        )
     
-st.markdown("---")
-    
-    # =============================================================================
-# REPORT INDIVIDUALE AUTISTA (da mettere alla fine del file, senza indentazione)
-# =============================================================================
-
-if st.session_state.get('processed_data', False):
     st.markdown("---")
+
+    # =============================================================================
+    # REPORT INDIVIDUALE AUTISTA (ACCESSIBILE PERCHÉ DISPLAY_DF È DEFINITO)
+    # =============================================================================
     st.subheader("Report Individuale Autista")
 
-    # Usa il display_df che hai già creato sopra nella sequenza operativa
-    if 'display_df' in locals() and not display_df.empty:
+    if not display_df.empty:
         autisti_con_corse = sorted(display_df['Autista'].dropna().unique())
         
         if autisti_con_corse:
@@ -334,9 +342,7 @@ if st.session_state.get('processed_data', False):
             )
 
             driver_df = display_df[display_df['Autista'] == selected_driver].copy()
-            driver_df = driver_df.reset_index(drop=True)
-            driver_df.index += 1
-
+            driver_df.index = driver_df.index + 1
             driver_color = DRIVER_COLORS.get(selected_driver, DRIVER_COLORS['DEFAULT'])
 
             st.markdown(f"""
@@ -348,10 +354,10 @@ if st.session_state.get('processed_data', False):
             st.dataframe(driver_df, use_container_width=True, hide_index=False)
 
             oggi = datetime.now().strftime("%d-%m-%Y")
-
-            # PDF
+            
+            # (Codice PDF e Excel omesso per brevità nel messaggio, ma è nel codice finale)
             try:
-                from io import BytesIO
+                # Per reportlab (PDF)
                 from reportlab.lib.pagesizes import A4
                 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
                 from reportlab.lib.styles import getSampleStyleSheet
@@ -368,7 +374,7 @@ if st.session_state.get('processed_data', False):
                 data = [["N.", "Cliente", "Ora Part.", "Destinazione", "Veicolo", "Ritardo", "Durata"]]
                 for i, row in driver_df.iterrows():
                     data.append([i, row['Cliente'], row['Ora Partenza'], row['Arrivo'],
-                                row['Veicolo'], f"{row['Ritardo (min)']} min", f"{row['Durata Servizio (min)']} min"])
+                                 row['Veicolo'], f"{row['Ritardo (min)']} min", f"{row['Durata Servizio (min)']} min"])
 
                 table = Table(data)
                 table.setStyle(TableStyle([
@@ -387,8 +393,8 @@ if st.session_state.get('processed_data', False):
                     file_name=f"Report_{selected_driver}_{oggi}.pdf",
                     mime="application/pdf"
                 )
-            except:
-                st.info("Reportlab non installato – solo Excel disponibile")
+            except ImportError:
+                st.info("Installare 'reportlab' per generare il PDF.")
 
             # Excel
             excel_buffer = BytesIO()
@@ -400,7 +406,12 @@ if st.session_state.get('processed_data', False):
                 file_name=f"Report_{selected_driver}_{oggi}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
         else:
             st.info("Nessun autista con corse oggi.")
     else:
         st.info("Carica i file e avvia l'ottimizzazione per vedere i report.")
+
+    # Pulsante per resettare e tornare al caricamento file
+    st.markdown("---")
+    st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
