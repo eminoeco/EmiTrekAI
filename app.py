@@ -347,7 +347,7 @@ st.markdown("---")
 st.markdown("---")
 
     # QUESTE RIGHE DEVONO AVERE UNA SOLA INDENTAZIONE RISPETTO A 'else:'
-    st.markdown("## 🔎 Ricerca e Storico Servizi")
+st.markdown("## 🔎 Ricerca e Storico Servizi")
     tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
     with tab1:
