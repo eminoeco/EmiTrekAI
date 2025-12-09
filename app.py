@@ -313,7 +313,7 @@ st.download_button(
                 mime="text/csv"
             )
     
-            st.markdown("---")
+st.markdown("---")
     
     # =============================================================================
 # REPORT INDIVIDUALE AUTISTA (da mettere alla fine del file, senza indentazione)
