@@ -314,103 +314,93 @@ else:
             mime="text/csv"
         )
             st.markdown("---")
+    
+    # =============================================================================
+# REPORT INDIVIDUALE AUTISTA (da mettere alla fine del file, senza indentazione)
+# =============================================================================
+
+if st.session_state.get('processed_data', False):
+    st.markdown("---")
     st.subheader("Report Individuale Autista")
 
-    # Lista autisti che hanno almeno una corsa assegnata
-    autisti_con_corse = sorted(display_df['Autista'].dropna().unique())
-    
-    if not autisti_con_corse:
-        st.info("Nessun autista assegnato oggi.")
-    else:
-        selected_driver = st.selectbox(
-            "Scegli l'autista per generare il report personale",
-            options=autisti_con_corse,
-            index=0
-        )
-
-        # Filtra le corse del singolo autista
-        driver_df = display_df[display_df['Autista'] == selected_driver].copy()
-        driver_df = driver_df.reset_index(drop=True)
-        driver_df.index += 1  # numerazione 1,2,3...
-
-        # Colore dell'autista per il titolo
-        driver_color = DRIVER_COLORS.get(selected_driver, DRIVER_COLORS['DEFAULT'])
-
-        st.markdown(f"""
-        <div style="padding: 15px; background-color: {driver_color}; color: white; border-radius: 10px; text-align: center; font-size: 24px; font-weight: bold; margin: 20px 0;">
-            Report Giornaliero – {selected_driver}
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Mostra le sue corse
-        st.dataframe(driver_df, use_container_width=True, hide_index=False)
-
-        # DATA ODIERNA per nome file
-        oggi = datetime.now().strftime("%d-%m-%Y")
-
-        # === DOWNLOAD PDF ===
-        try:
-            from io import BytesIO
-            from reportlab.lib.pagesizes import A4
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-            from reportlab.lib.styles import getSampleStyleSheet
-            from reportlab.lib import colors as rl_colors
-
-            buffer = BytesIO()
-            doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=70, bottomMargin=50)
-            styles = getSampleStyleSheet()
-            elements = []
-
-            # Titolo
-            elements.append(Paragraph(f"<font size=18><b>Report Autista – {selected_driver}</b></font>", styles['Title']))
-            elements.append(Paragraph(f"<i>Data: {oggi}</i><br/><br/>", styles['Normal']))
-
-            # Tabella
-            data = [["#", "Cliente", "Ora Part.", "Destinazione", "Veicolo", "Ritardo", "Durata"]]
-            for _, row in driver_df.iterrows():
-                data.append([
-                    row.name,
-                    row['Cliente'],
-                    row['Ora Partenza'],
-                    row['Arrivo'],
-                    row['Veicolo'],
-                    f"{row['Ritardo (min)']} min",
-                    f"{row['Durata Servizio (min)']} min"
-                ])
-
-            table = Table(data)
-            table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), rl_colors.HexColor(driver_color)),
-                ('TEXTCOLOR', (0,0), (-1,0), rl_colors.white),
-                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
-                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0,0), (-1,-1), 11),
-                ('GRID', (0,0), (-1,-1), 0.5, rl_colors.grey),
-                ('BACKGROUND', (0,1), (-1,-1), rl_colors.whitesmoke),
-            ]))
-            elements.append(table)
-            doc.build(elements)
-            pdf_data = buffer.getvalue()
-            buffer.close()
-
-            st.download_button(
-                label="Scarica Report PDF",
-                data=pdf_data,
-                file_name=f"Report_{selected_driver.replace(' ', '_')}_{oggi}.pdf",
-                mime="application/pdf"
+    # Usa il display_df che hai già creato sopra nella sequenza operativa
+    if 'display_df' in locals() and not display_df.empty:
+        autisti_con_corse = sorted(display_df['Autista'].dropna().unique())
+        
+        if autisti_con_corse:
+            selected_driver = st.selectbox(
+                "Scegli l'autista per il report personale",
+                options=autisti_con_corse
             )
-        except ImportError:
-            st.info("Per PDF serve reportlab → `pip install reportlab`")
 
-        # === DOWNLOAD EXCEL ===
-        excel_buffer = BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            driver_df.to_excel(writer, index=True, sheet_name=selected_driver[:31])
-        excel_data = excel_buffer.getvalue()
+            driver_df = display_df[display_df['Autista'] == selected_driver].copy()
+            driver_df = driver_df.reset_index(drop=True)
+            driver_df.index += 1
 
-        st.download_button(
-            label="Scarica Report Excel",
-            data=excel_data,
-            file_name=f"Report_{selected_driver.replace(' ', '_')}_{oggi}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+            driver_color = DRIVER_COLORS.get(selected_driver, DRIVER_COLORS['DEFAULT'])
+
+            st.markdown(f"""
+            <div style="padding:20px; background:{driver_color}; color:white; border-radius:12px; text-align:center; font-size:26px; font-weight:bold; margin:30px 0;">
+                Report Giornaliero — {selected_driver}
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.dataframe(driver_df, use_container_width=True, hide_index=False)
+
+            oggi = datetime.now().strftime("%d-%m-%Y")
+
+            # PDF
+            try:
+                from io import BytesIO
+                from reportlab.lib.pagesizes import A4
+                from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+                from reportlab.lib.styles import getSampleStyleSheet
+                from reportlab.lib import colors as rl_colors
+
+                buffer = BytesIO()
+                doc = SimpleDocTemplate(buffer, pagesize=A4)
+                elements = []
+                styles = getSampleStyleSheet()
+
+                elements.append(Paragraph(f"<b>Report Autista: {selected_driver}</b>", styles['Title']))
+                elements.append(Paragraph(f"Data: {oggi}<br/><br/>", styles['Normal']))
+
+                data = [["N.", "Cliente", "Ora Part.", "Destinazione", "Veicolo", "Ritardo", "Durata"]]
+                for i, row in driver_df.iterrows():
+                    data.append([i, row['Cliente'], row['Ora Partenza'], row['Arrivo'],
+                                row['Veicolo'], f"{row['Ritardo (min)']} min", f"{row['Durata Servizio (min)']} min"])
+
+                table = Table(data)
+                table.setStyle(TableStyle([
+                    ('BACKGROUND', (0,0), (-1,0), rl_colors.HexColor(driver_color)),
+                    ('TEXTCOLOR', (0,0), (-1,0), rl_colors.white),
+                    ('GRID', (0,0), (-1,-1), 1, rl_colors.black),
+                    ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                    ('BACKGROUND', (0,1), (-1,-1), rl_colors.beige),
+                ]))
+                elements.append(table)
+                doc.build(elements)
+
+                st.download_button(
+                    label="Scarica Report PDF",
+                    data=buffer.getvalue(),
+                    file_name=f"Report_{selected_driver}_{oggi}.pdf",
+                    mime="application/pdf"
+                )
+            except:
+                st.info("Reportlab non installato – solo Excel disponibile")
+
+            # Excel
+            excel_buffer = BytesIO()
+            with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                driver_df.to_excel(writer, index=True, sheet_name=selected_driver[:30])
+            st.download_button(
+                label="Scarica Report Excel",
+                data=excel_buffer.getvalue(),
+                file_name=f"Report_{selected_driver}_{oggi}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+        else:
+            st.info("Nessun autista con corse oggi.")
+    else:
+        st.info("Carica i file e avvia l'ottimizzazione per vedere i report.")
