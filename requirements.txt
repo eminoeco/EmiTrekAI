@@ -1,6 +1,0 @@
-streamlit
-pandas
-openpyxl
-python-dotenv
-folium
-streamlit-folium
