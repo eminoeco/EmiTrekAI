@@ -313,3 +313,104 @@ else:
             file_name=f"Sequenza_FCO_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
         )
+            st.markdown("---")
+    st.subheader("Report Individuale Autista")
+
+    # Lista autisti che hanno almeno una corsa assegnata
+    autisti_con_corse = sorted(display_df['Autista'].dropna().unique())
+    
+    if not autisti_con_corse:
+        st.info("Nessun autista assegnato oggi.")
+    else:
+        selected_driver = st.selectbox(
+            "Scegli l'autista per generare il report personale",
+            options=autisti_con_corse,
+            index=0
+        )
+
+        # Filtra le corse del singolo autista
+        driver_df = display_df[display_df['Autista'] == selected_driver].copy()
+        driver_df = driver_df.reset_index(drop=True)
+        driver_df.index += 1  # numerazione 1,2,3...
+
+        # Colore dell'autista per il titolo
+        driver_color = DRIVER_COLORS.get(selected_driver, DRIVER_COLORS['DEFAULT'])
+
+        st.markdown(f"""
+        <div style="padding: 15px; background-color: {driver_color}; color: white; border-radius: 10px; text-align: center; font-size: 24px; font-weight: bold; margin: 20px 0;">
+            Report Giornaliero – {selected_driver}
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Mostra le sue corse
+        st.dataframe(driver_df, use_container_width=True, hide_index=False)
+
+        # DATA ODIERNA per nome file
+        oggi = datetime.now().strftime("%d-%m-%Y")
+
+        # === DOWNLOAD PDF ===
+        try:
+            from io import BytesIO
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors as rl_colors
+
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4, topMargin=70, bottomMargin=50)
+            styles = getSampleStyleSheet()
+            elements = []
+
+            # Titolo
+            elements.append(Paragraph(f"<font size=18><b>Report Autista – {selected_driver}</b></font>", styles['Title']))
+            elements.append(Paragraph(f"<i>Data: {oggi}</i><br/><br/>", styles['Normal']))
+
+            # Tabella
+            data = [["#", "Cliente", "Ora Part.", "Destinazione", "Veicolo", "Ritardo", "Durata"]]
+            for _, row in driver_df.iterrows():
+                data.append([
+                    row.name,
+                    row['Cliente'],
+                    row['Ora Partenza'],
+                    row['Arrivo'],
+                    row['Veicolo'],
+                    f"{row['Ritardo (min)']} min",
+                    f"{row['Durata Servizio (min)']} min"
+                ])
+
+            table = Table(data)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0,0), (-1,0), rl_colors.HexColor(driver_color)),
+                ('TEXTCOLOR', (0,0), (-1,0), rl_colors.white),
+                ('ALIGN', (0,0), (-1,-1), 'CENTER'),
+                ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0,0), (-1,-1), 11),
+                ('GRID', (0,0), (-1,-1), 0.5, rl_colors.grey),
+                ('BACKGROUND', (0,1), (-1,-1), rl_colors.whitesmoke),
+            ]))
+            elements.append(table)
+            doc.build(elements)
+            pdf_data = buffer.getvalue()
+            buffer.close()
+
+            st.download_button(
+                label="Scarica Report PDF",
+                data=pdf_data,
+                file_name=f"Report_{selected_driver.replace(' ', '_')}_{oggi}.pdf",
+                mime="application/pdf"
+            )
+        except ImportError:
+            st.info("Per PDF serve reportlab → `pip install reportlab`")
+
+        # === DOWNLOAD EXCEL ===
+        excel_buffer = BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            driver_df.to_excel(writer, index=True, sheet_name=selected_driver[:31])
+        excel_data = excel_buffer.getvalue()
+
+        st.download_button(
+            label="Scarica Report Excel",
+            data=excel_data,
+            file_name=f"Report_{selected_driver.replace(' ', '_')}_{oggi}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
