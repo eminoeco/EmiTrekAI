@@ -348,9 +348,9 @@ st.markdown("---")
 
     # QUESTE RIGHE DEVONO AVERE UNA SOLA INDENTAZIONE RISPETTO A 'else:'
 st.markdown("## 🔎 Ricerca e Storico Servizi")
-    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
+tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
-    with tab1:
+with tab1:
         st.subheader("🔍 Dettagli Servizio per Cliente")
         # Il codice interno a 'with tab1' è indentato una volta in più
         client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
