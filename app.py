@@ -392,5 +392,5 @@ with tab2:
                 st.info("Nessun servizio assegnato a questo autista.")
 
     # Pulsante per resettare e tornare al caricamento file
-    st.markdown("---")
+st.markdown("---")
 st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
