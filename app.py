@@ -348,10 +348,9 @@ else:
     st.info("Nessun cliente assegnato. La tabella è vuota.")
 
 st.markdown("---")
-# ... (Il resto del codice rimane invariato) ...
 
-    # --- RICERCA E STORICO INTERATTIVO ---
-    st.markdown("## 🔎 Ricerca e Storico Servizi")
+# --- RICERCA E STORICO INTERATTIVO ---
+st.markdown("## 🔎 Ricerca e Storico Servizi")
     tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
     with tab1:
