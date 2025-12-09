@@ -3,9 +3,8 @@ import pandas as pd
 from datetime import datetime, time, timedelta
 import numpy as np
 
-
-# FIX CRITICI PER STREAMLIT CLOUD
-pd.options.mode.chained_assignment = None  # Evita warning fastidiosi
+# FIX PER STREAMLIT CLOUD: disabilita warning e chained assignment
+pd.options.mode.chained_assignment = None
 st.set_option('deprecation.showPyplotGlobalUse', False)
 np.random.seed(42)  # Riproducibilità
 
@@ -104,7 +103,6 @@ def start_optimization(df_clienti, df_flotta):
     st.session_state['temp_df_flotta'] = df_flotta
     run_scheduling(st.session_state['temp_df_clienti'], st.session_state['temp_df_flotta'])
 
-
 # --- LOGICA DI SCHEDULAZIONE (CORE) ---
 def run_scheduling(df_clienti, df_flotta):
     # Logica di assegnazione (completa)
@@ -175,7 +173,6 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
     st.rerun()
-
 
 # --- LAYOUT PRINCIPALE ---
 
@@ -269,49 +266,100 @@ else:
 
     st.markdown("---")
 
-       # --- SEQUENZA OPERATIVA UNIFICATA (VERSIONE 100% COMPATIBILE STREAMLIT CLOUD) ---
-    st.markdown("## Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
-
+    # --- SEQUENZA OPERATIVA UNIFICATA (FIX COMPLETO: NUOVO DataFrame SENZA STYLER) ---
+    st.markdown("## 🗓️ Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
+    
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
 
     if not assigned_df.empty:
-        # Resetta indice per sicurezza
+        # Resetta indice SENZA inplace=True (evita modifica in-place)
         assigned_df = assigned_df.reset_index(drop=True)
         
-        # Calcola ora fine servizio
+        # Calcola l'Ora di Fine Servizio
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
-
-        # Crea il DataFrame finale con le colonne chiare
+        
+        # Crea NUOVO DataFrame con colonne fisse (NO rename o filter - evita mismatch)
         display_df = pd.DataFrame({
-            'Autista': assigned_df['Autista Assegnato'],
-            'Cliente': assigned_df['ID Prenotazione'],
-            'Partenza': assigned_df['Indirizzo Prelievo'],
-            'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].dt.strftime('%H:%M'),
-            'Arrivo': assigned_df['Destinazione Finale'],
-            'Ora Arrivo': assigned_df['Ora Fine Servizio'].dt.strftime('%H:%M'),
-            'Ritardo (min)': assigned_df['Ritardo Prelievo (min)'].astype(int),
+            'Autista': assigned_df['Autista Assegnato'].fillna('N/A'),
+            'Cliente': assigned_df['ID Prenotazione'].fillna('N/A'),
+            'Partenza': assigned_df['Indirizzo Prelievo'].fillna('N/A'),
+            'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].apply(lambda t: t.strftime('%H:%M') if isinstance(t, time) else str(t)),
+            'Arrivo': assigned_df['Destinazione Finale'].fillna('N/A'),
+            'Ora Arrivo': assigned_df['Ora Fine Servizio'].apply(lambda t: t.strftime('%H:%M') if isinstance(t, time) else str(t)),
+            'Ritardo (min)': assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
             'Veicolo': assigned_df['Tipo Veicolo Richiesto'].apply(
-                lambda x: VEHICLE_EMOJIS.get(str(x).strip().capitalize(), 'Vo') + " " + str(x).strip().capitalize()
+                lambda x: VEHICLE_EMOJIS.get(str(x).strip().title(), '❓') + ' ' + str(x).strip().title()
             ),
-            'Durata (min)': assigned_df['Tempo Servizio Totale (Minuti)'].astype(int),
+            'Durata (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int)
         })
-
-        # MOSTRA LA TABELLA SENZA USARE .style (causa del crash online)
+        
+        # Visualizza SENZA .style o filtri (direttamente il DataFrame nuovo)
         st.dataframe(
             display_df,
             use_container_width=True,
             hide_index=True
         )
 
-        # Download button per Excel
-        csv = display_df.to_csv(index=False).encode()
+        # Bonus: Download Excel
+        csv = display_df.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Scarica Sequenza Operativa (Excel)",
+            label="📥 Scarica Sequenza Operativa (CSV/Excel)",
             data=csv,
             file_name=f"Sequenza_Operativa_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
         )
     else:
-        st.info("Nessun servizio assegnato con successo.")
+        st.info("Nessun cliente assegnato. La tabella è vuota.")
     
     st.markdown("---")
+
+    # --- RICERCA E STORICO INTERATTIVO ---
+    st.markdown("## 🔎 Ricerca e Storico Servizi")
+    tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
+    
+    with tab1:
+        st.subheader("🔍 Dettagli Servizio per Cliente")
+        client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
+        selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
+        
+        if selected_client_id:
+            client_details = assegnazioni_df[assegnazioni_df['ID Prenotazione'] == selected_client_id]
+            if not client_details.empty:
+                detail_row = client_details.iloc[0]
+                status_emoji = STATUS_EMOJIS.get(detail_row['Stato Assegnazione'], '')
+                st.markdown(f"**Cliente:** {detail_row['ID Prenotazione']}")
+                st.markdown(f"**Stato:** {detail_row['Stato Assegnazione']} {status_emoji}")
+                if detail_row['Stato Assegnazione'] == 'ASSEGNATO':
+                    st.markdown(f"**Ora di Prelievo Effettiva:** {detail_row['Ora Effettiva Prelievo'].strftime('%H:%M')}")
+                    st.markdown(f"**Autista Assegnato:** {detail_row['Autista Assegnato']}")
+                    st.markdown(f"**Veicolo:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
+                    st.markdown(f"**Ritardo Prelievo:** {detail_row['Ritardo Prelievo (min)']} minuti")
+                else:
+                    st.markdown(f"**Ora di Prelievo Richiesta:** {detail_row['Ora Prelievo Richiesta'].strftime('%H:%M')}")
+                    st.markdown(f"**Tipo Veicolo Richiesto:** {detail_row['Tipo Veicolo Richiesto']} {VEHICLE_EMOJIS.get(detail_row['Tipo Veicolo Richiesto'], '')}")
+            else:
+                st.info("Nessun dettaglio trovato per il cliente selezionato.")
+
+    with tab2:
+        st.subheader("👤 Storico Servizi per Autista")
+        assigned_drivers = assigned_df['Autista'].dropna().unique().tolist() 
+        driver_list = [''] + assigned_drivers
+        selected_driver_name = st.selectbox("Seleziona l'Autista da ricercare:", driver_list)
+        
+        if selected_driver_name:
+            driver_history = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == selected_driver_name]
+            if not driver_history.empty:
+                # Visualizza senza .style (usa markdown per colore)
+                history_df = driver_history[[
+                    'ID Prenotazione', 'Ora Prelievo Richiesta', 'Ora Effettiva Prelievo', 
+                    'Destinazione Finale', 'Ritardo Prelievo (min)', 'Stato Assegnazione'
+                ]].copy()
+                history_df['ID Prenotazione'] = history_df['ID Prenotazione'].apply(lambda x: f"<span style='background-color: {DRIVER_COLORS.get(selected_driver_name, DRIVER_COLORS['DEFAULT'])}; color: white; padding: 2px; border-radius: 3px;'>{x}</span>")
+                st.markdown(history_df.to_html(escape=False), unsafe_allow_html=True)
+            else:
+                st.info("Nessun servizio assegnato a questo autista.")
+
+    # Pulsante per resettare e tornare al caricamento file
+    st.markdown("---")
+    st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
+    
