@@ -5,8 +5,7 @@ import numpy as np
 
 # FIX PER STREAMLIT CLOUD: disabilita warning e chained assignment
 pd.options.mode.chained_assignment = None
-st.set_option('deprecation.showPyplotGlobalUse', False)
-np.random.seed(42)  # Riproducibilità
+
 
 # --- CONFIGURAZIONE GENERALE ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI: VOM", page_icon="🗓️")
@@ -362,4 +361,3 @@ else:
     # Pulsante per resettare e tornare al caricamento file
     st.markdown("---")
     st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
-    
