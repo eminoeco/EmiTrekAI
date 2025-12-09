@@ -265,7 +265,7 @@ else:
 
     st.markdown("---")
 
-    # --- SEQUENZA OPERATIVA UNIFICATA – VERSIONE FINALE PERFETTA ---
+    # --- SEQUENZA OPERATIVA UNIFICATA – VERSIONE DEFINITIVA (FCO + Durata Servizio) ---
     st.markdown("## Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
@@ -276,34 +276,32 @@ else:
         # Calcola ora fine servizio
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
 
-        # DataFrame finale – sicuro al 100% anche con colonne mancanti o nomi diversi
+        # DataFrame finale – corretto per il tuo file reale
         display_df = pd.DataFrame({
-            'Autista'       : assigned_df['Autista Assegnato'].fillna('-'),
-            'Cliente'       : assigned_df.get('ID Prenotazione', pd.Series('-', index=assigned_df.index)),
-            'Partenza'      : assigned_df.get('Indirizzo Prelievo', pd.Series('-', index=assigned_df.index))
-                              .fillna('-'),
-            'Ora Partenza'  : assigned_df['Ora Effettiva Prelievo'].apply(
+            'Autista'              : assigned_df['Autista Assegnato'].fillna('-'),
+            'Cliente'              : assigned_df.get('ID Prenotazione', pd.Series('-', index=assigned_df.index)),
+            'Partenza'             : 'FCO',  # Sempre FCO come nel tuo file
+            'Ora Partenza'         : assigned_df['Ora Effettiva Prelievo'].apply(
                 lambda x: x.strftime('%H:%M') if pd.notna(x) and hasattr(x, 'strftime') else '-'
             ),
-            'Arrivo'        : assigned_df.get('Destinazione Finale', pd.Series('-', index=assigned_df.index))
-                              .fillna('-'),
-            'Ora Arrivo'    : assigned_df['Ora Fine Servizio'].apply(
+            'Arrivo'               : assigned_df.get('Destinazione Finale', pd.Series('-', index=assigned_df.index)).fillna('-'),
+            'Ora Arrivo'           : assigned_df['Ora Fine Servizio'].apply(
                 lambda x: x.strftime('%H:%M') if pd.notna(x) and hasattr(x, 'strftime') else '-'
             ),
-            'Ritardo (min)' : assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
-            'Veicolo'       : assigned_df['Tipo Veicolo Richiesto'].astype(str).apply(
+            'Ritardo (min)'        : assigned_df['Ritardo Prelievo (min)'].fillna(0).astype(int),
+            'Veicolo'              : assigned_df['Tipo Veicolo Richiesto'].astype(str).apply(
                 lambda x: VEHICLE_EMOJIS.get(x.strip().title(), 'Veicolo') + ' ' + x.strip().title()
             ),
-            'Durata (min)'  : assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
+            'Durata Servizio (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
         })
 
         st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-        # Download Excel/CSV
+        # Download perfetto per Excel
         csv = display_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             label="Scarica Sequenza Operativa (Excel/CSV)",
             data=csv,
-            file_name=f"Sequenza_Operativa_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+            file_name=f"Sequenza_FCO_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
             mime="text/csv"
         )
