@@ -17,7 +17,7 @@ if 'processed_data' not in st.session_state:
     st.session_state['assegnazioni_complete'] = None
     st.session_state['flotta_risorse'] = None
 
-# --- MAPPATURA COLORI E EMOJI (ORA CON 7 COLORI DISTINTI) ---
+# --- MAPPATURA COLORI E EMOJI (7 COLORI) ---
 DRIVER_COLORS = {
     'Andrea': '#4CAF50',    # Verde
     'Carlo': '#2199F3',     # Blu
@@ -41,7 +41,7 @@ STATUS_EMOJIS = {
     'NON ASSEGNATO': '❌'
 }
 
-# --- INIEZIONE CSS SEMPLIFICATA (Sfondo e Compattazione) ---
+# --- INIEZIONE CSS SEMPLIFICATA ---
 st.markdown(
     """
     <style>
@@ -117,7 +117,7 @@ def start_optimization(df_clienti, df_flotta):
     st.session_state['temp_df_flotta'] = df_flotta
     run_scheduling(st.session_state['temp_df_clienti'], st.session_state['temp_df_flotta'])
 
-# --- LOGICA DI SCHEDULAZIONE (CORE) ---
+# --- LOGICA DI SCHEDULAZIONE (CORE CON BILANCIAMENTO DEL CARICO) ---
 def run_scheduling(df_clienti, df_flotta):
     
     assegnazioni_df = df_clienti.copy()
@@ -131,6 +131,9 @@ def run_scheduling(df_clienti, df_flotta):
     df_risorse['Prossima Disponibilità'] = df_risorse['Disponibile Da (hh:mm)'].apply(to_time)
     df_risorse['Disponibile Fino (hh:mm)'] = df_risorse['Disponibile Fino (hh:mm)'].apply(to_time)
     df_risorse['Tipo Veicolo'] = df_risorse['Tipo Veicolo'].astype(str).str.capitalize()
+    
+    # Inizializza il contatore dei servizi per il load balancing
+    df_risorse['Servizi Assegnati'] = 0 
     
     assegnazioni_df['Ora Prelievo Richiesta'] = assegnazioni_df['Ora Arrivo'].apply(to_time)
     assegnazioni_df['Tipo Veicolo Richiesto'] = assegnazioni_df['Tipo Veicolo Richiesto'].astype(str).str.capitalize()
@@ -158,11 +161,13 @@ def run_scheduling(df_clienti, df_flotta):
         
         tempo_richiesto_min = time_to_minutes(ora_richiesta)
         
-        # FIX LOGICA: Ordina per minima Prossima Disponibilità per distribuire il carico
+        # Calcolo del ritardo minimo
         candidati_validi['Ritardo Min'] = (candidati_validi['Prossima Disponibilità'].apply(time_to_minutes) - tempo_richiesto_min).clip(lower=0)
         
-        # Ordina prima per ritardo (minimo ritardo) e poi per Prossima Disponibilità (chi si libera prima)
-        risorsa_assegnata = candidati_validi.sort_values(by=['Ritardo Min', 'Prossima Disponibilità']).iloc[0] 
+        # LOGICA DI BILANCIAMENTO DEL CARICO: Ordina per 1. Ritardo Minimo, 2. Servizi Assegnati Minimi, 3. Prossima Disponibilità
+        risorsa_assegnata = candidati_validi.sort_values(
+            by=['Ritardo Min', 'Servizi Assegnati', 'Prossima Disponibilità']
+        ).iloc[0] 
         
         ritardo_minuti = int(risorsa_assegnata['Ritardo Min']) 
         
@@ -181,14 +186,48 @@ def run_scheduling(df_clienti, df_flotta):
         assegnazioni_df.loc[index, 'Ora Effettiva Prelievo'] = ora_effettiva_prelievo
         assegnazioni_df.loc[index, 'Ritardo Prelievo (min)'] = ritardo_minuti
         
-        # AGGIORNA la risorsa
+        # AGGIORNA la risorsa (Prossima Disponibilità e conteggio servizi)
         df_risorse.loc[df_risorse['ID Veicolo'] == risorsa_assegnata['ID Veicolo'], 'Prossima Disponibilità'] = ora_fine_servizio
+        df_risorse.loc[df_risorse['ID Veicolo'] == risorsa_assegnata['ID Veicolo'], 'Servizi Assegnati'] += 1
 
     # SALVA NELLO STATO E IMPOSTA COME PROCESSATO
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
     st.rerun()
+
+# --- FUNZIONE RATIONALE AI (NUOVA FUNZIONE) ---
+def generate_ai_report_explanation(driver_df, driver_name, df_risorse):
+    
+    driver_info = df_risorse[df_risorse['Autista'] == driver_name].iloc[0]
+    vehicle_type = driver_info['Tipo Veicolo']
+    
+    if driver_df.empty:
+        return f"L'autista {driver_name} non ha servizi assegnati in questa sequenza operativa. Il suo veicolo ({vehicle_type}) era pronto, ma le richieste necessarie erano già state soddisfatte da altri colleghi o l'autista non era disponibile negli orari di picco."
+    
+    total_services = driver_df.shape[0]
+    total_duration = driver_df['Durata Servizio (min)'].sum()
+    max_ritardo = driver_df['Ritardo (min)'].max()
+    next_available = driver_info['Prossima Disponibilità'].strftime('%H:%M')
+    
+    report = f"### 🤖 Rationale di Assegnazione per l'Autista {driver_name}\n\n"
+    report += f"L'algoritmo ha assegnato **{total_services} servizi** a {driver_name}, per una durata complessiva di **{total_duration} minuti**.\n\n"
+    
+    # Rationale sui servizi (basato sul veicolo e sul bilanciamento)
+    colleagues = df_risorse[(df_risorse['Tipo Veicolo'] == vehicle_type) & (df_risorse['Autista'] != driver_name)]['Autista'].tolist()
+    
+    report += f"**Tipo di Veicolo**: {driver_name} guida un veicolo **{vehicle_type}**. È stato selezionato per soddisfare le richieste di questo veicolo, in un'ottica di **bilanciamento del carico** con i colleghi che guidano lo stesso tipo di veicolo ({', '.join(colleagues)}).\n\n"
+        
+    # Rationale sui ritardi
+    if max_ritardo > 0:
+        report += f"**Gestione del Tempo**: Il ritardo massimo registrato è stato di **{max_ritardo} minuti** (nel servizio con ID {driver_df.iloc[0]['Cliente']} che ha richiesto il ritardo). Questo ritardo indica che la risorsa era già impegnata in un servizio precedente, ma è stata comunque la scelta ottimale per bilanciare il carico e minimizzare il disservizio.\n\n"
+    else:
+        report += f"**Gestione del Tempo**: Tutti i servizi di {driver_name} sono stati assegnati con un ritardo minimo (0 minuti rispetto all'ora richiesta), il che indica un'ottima finestra di disponibilità per l'autista nel momento della richiesta.\n\n"
+        
+    # Conclusione
+    report += f"**Disponibilità**: L'orario di fine servizio stimato per {driver_name} è alle **{next_available}**. Dopo tale orario, {driver_name} sarà nuovamente disponibile per nuovi incarichi, fino alla fine del turno (19:00)."
+    
+    return report
 
 # --- LAYOUT PRINCIPALE ---
 
@@ -227,7 +266,6 @@ else:
     assegnazioni_df = st.session_state['assegnazioni_complete']
     df_risorse = st.session_state['flotta_risorse']
 
-    # FIX NameError: Controlla se il DataFrame è vuoto/None
     if assegnazioni_df is None or assegnazioni_df.empty:
         st.error("Errore: I dati non sono stati caricati o il file è vuoto. Torna indietro e ricarica i file.")
         st.button("↩️ Torna al Caricamento File", on_click=lambda: st.session_state.update(processed_data=False))
@@ -257,7 +295,7 @@ else:
     
     st.markdown("---")
 
-    # --- Sezione Operatori/Autisti con Schede Colorate e Emoji (DIMENSIONI RIDOTTE) ---
+    # --- Sezione Operatori/Autisti con Schede Colorate e Emoji ---
     st.subheader("🧑‍✈️ I Nostri Operatori NCC")
     
     drivers_unique = df_risorse['Autista'].unique()
@@ -282,12 +320,10 @@ else:
 
     st.markdown("---")
 
-    # --- PREPARAZIONE DATAFRAME DI VISUALIZZAZIONE (DEFINITO UNA SOLA VOLTA) ---
+    # --- PREPARAZIONE DATAFRAME DI VISUALIZZAZIONE ---
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
 
-    # Inizializza display_df come DataFrame vuoto per evitare NameError nel blocco download
     if assigned_df.empty:
-        # Se non ci sono assegnazioni, crea un DataFrame vuoto con le colonne corrette
         display_df = pd.DataFrame(columns=[
             'Autista', 'Cliente', 'Partenza', 'Ora Partenza', 
             'Arrivo', 'Ora Arrivo', 'Ritardo (min)', 'Veicolo', 'Durata Servizio (min)'
@@ -296,7 +332,6 @@ else:
         assigned_df.reset_index(drop=True, inplace=True)
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
         
-        # FIX: Assicurati che 'Indirizzo Prelievo' sia usato come partenza se presente, altrimenti 'FCO'
         partenza_col = assigned_df.get('Indirizzo Prelievo', pd.Series('FCO', index=assigned_df.index)).fillna('FCO')
         
         display_df = pd.DataFrame({
@@ -323,16 +358,12 @@ else:
     if display_df.empty:
         st.info("Nessun servizio assegnato con successo.")
     else:
-        # Funzione di colorazione (stile semplificato, solo Autista)
         def color_autista(row):
             colore = DRIVER_COLORS.get(row['Autista'], DRIVER_COLORS['DEFAULT'])
-            # Applica lo stile solo alla colonna 'Autista'
             return [f'background-color: {colore}; color: white' if col == 'Autista' else '' for col in display_df.columns]
 
-        # APPLICA IL COLORE
         styled_df = display_df.style.apply(color_autista, axis=1)
 
-        # MOSTRA LA TABELLA BELLA (FIX: Indentazione + hide_index=True)
         st.dataframe(styled_df, use_container_width=True, hide_index=True)
         
         # Download
@@ -347,7 +378,7 @@ else:
     st.markdown("---")
 
     # =============================================================================
-    # REPORT INDIVIDUALE AUTISTA 
+    # REPORT INDIVIDUALE AUTISTA (CON RATIONALE AI)
     # =============================================================================
     st.subheader("Report Individuale Autista")
 
@@ -371,6 +402,10 @@ else:
             """, unsafe_allow_html=True)
 
             st.dataframe(driver_df, use_container_width=True, hide_index=False)
+            
+            # AGGIUNGI IL REPORT AI ESPLICATIVO
+            report_explanation = generate_ai_report_explanation(driver_df, selected_driver, df_risorse)
+            st.info(report_explanation) # Usa st.info per un effetto 'pop-up' style box
 
             oggi = datetime.now().strftime("%d-%m-%Y")
             
