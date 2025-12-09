@@ -24,7 +24,7 @@ VEHICLE_EMOJIS = {
     'Berlina': '🚗',
     'Minivan': '🚐',
     'Suv': '🚙', 
-    'Default': '❓'
+    'Default': '❓' # <-- CHIAVE CORRETTA QUI
 }
 
 STATUS_EMOJIS = {
@@ -34,16 +34,10 @@ STATUS_EMOJIS = {
 
 # --- FUNZIONE DI STYLING GLOBALE ---
 def highlight_driver_client(s, final_cols, driver_colors):
-    # s è la Series (riga) passata da apply
-    
-    # Determina il colore
     driver_name = s['Autista']
     color = driver_colors.get(driver_name, driver_colors['DEFAULT'])
-    
-    # Crea una Series di stili vuoti (stili di base)
     styles = pd.Series('', index=s.index)
 
-    # Itera sui nomi di colonna che sono VISIBILI (final_cols)
     for col in final_cols:
         if col in ['Autista', 'Cliente']:
             styles[col] = f'background-color: {color}; color: white; font-weight: bold;'
@@ -192,7 +186,7 @@ def run_scheduling(df_clienti, df_flotta):
     st.session_state['assegnazioni_complete'] = assegnazioni_df
     st.session_state['flotta_risorse'] = df_risorse
     st.session_state['processed_data'] = True
-    st.rerun() # Usiamo st.rerun() per evitare il warning
+    st.rerun() 
 
 
 # --- LAYOUT PRINCIPALE ---
@@ -266,7 +260,8 @@ else:
         with drivers_overview_cols[i]:
             driver_color = DRIVER_COLORS.get(driver, DRIVER_COLORS['DEFAULT'])
             driver_info = df_risorse[df_risorse['Autista'] == driver].iloc[0]
-            vehicle_emoji = VEHICLE_EMOJIS.get(driver_info['Tipo Veicolo'], VEHICLE_EMOJIS['DEFAULT'])
+            # FIX: VEICLE_EMOJIS['Default']
+            vehicle_emoji = VEHICLE_EMOJIS.get(driver_info['Tipo Veicolo'], VEHICLE_EMOJIS['Default'])
             
             num_servizi = assegnazioni_df[assegnazioni_df['Autista Assegnato'] == driver].shape[0]
 
@@ -343,11 +338,11 @@ else:
     
     st.markdown("---")
 
-    # --- RICERCA E STORICO INTERATTIVO (FIX INDENTATION) ---
+    # --- RICERCA E STORICO INTERATTIVO ---
     st.markdown("## 🔎 Ricerca e Storico Servizi")
     tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
-    # [FIX INDENTATION A RIGA 332]
+    # [FIX INDENTATION HERE]
     with tab1:
         st.subheader("🔍 Dettagli Servizio per Cliente")
         client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
