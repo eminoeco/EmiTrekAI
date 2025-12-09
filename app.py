@@ -265,7 +265,7 @@ else:
 
     st.markdown("---")
 
-    # --- SEQUENZA OPERATIVA UNIFICATA – VERSIONE DEFINITIVA (FCO + Durata Servizio) ---
+      # --- SEQUENZA OPERATIVA CON COLORE AUTISTA COME SOPRA ---
     st.markdown("## Sequenza Operativa Unificata: Dettaglio Servizi Assegnati")
     
     assigned_df = assegnazioni_df[assegnazioni_df['Stato Assegnazione'] == 'ASSEGNATO'].copy()
@@ -273,14 +273,13 @@ else:
     if assigned_df.empty:
         st.info("Nessun servizio assegnato con successo.")
     else:
-        # Calcola ora fine servizio
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
 
-        # DataFrame finale – corretto per il tuo file reale
+        # DataFrame finale
         display_df = pd.DataFrame({
             'Autista'              : assigned_df['Autista Assegnato'].fillna('-'),
             'Cliente'              : assigned_df.get('ID Prenotazione', pd.Series('-', index=assigned_df.index)),
-            'Partenza'             : 'FCO',  # Sempre FCO come nel tuo file
+            'Partenza'             : 'FCO',
             'Ora Partenza'         : assigned_df['Ora Effettiva Prelievo'].apply(
                 lambda x: x.strftime('%H:%M') if pd.notna(x) and hasattr(x, 'strftime') else '-'
             ),
@@ -295,9 +294,18 @@ else:
             'Durata Servizio (min)': assigned_df['Tempo Servizio Totale (Minuti)'].fillna(0).astype(int),
         })
 
-        st.dataframe(display_df, use_container_width=True, hide_index=True)
+        # FUNZIONE DI COLORAZIONE
+        def color_autista(row):
+            colore = DRIVER_COLORS.get(row['Autista'], DRIVER_COLORS['DEFAULT'])
+            return [f'background-color: {colore}; color: white' if col == 'Autista' else '' for col in display_df.columns]
 
-        # Download perfetto per Excel
+        # APPLICA IL COLORE
+        styled_df = display_df.style.apply(color_autista, axis=1)
+
+        # MOSTRA LA TABELLA BELLA
+        st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
+        # Download
         csv = display_df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             label="Scarica Sequenza Operativa (Excel/CSV)",
