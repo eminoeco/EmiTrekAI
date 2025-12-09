@@ -342,14 +342,19 @@ st.markdown("---")
 # ... (Il resto del codice rimane invariato) ...
 
     # --- RICERCA E STORICO INTERATTIVO ---
+# ... (Fine del blocco IF/ELSE che genera la tabella) ...
+    
+    st.markdown("---")
+
+    # QUESTE RIGHE DEVONO AVERE UNA SOLA INDENTAZIONE RISPETTO A 'else:'
     st.markdown("## 🔎 Ricerca e Storico Servizi")
     tab1, tab2 = st.tabs(["Cerca per Cliente", "Cerca per Autista"])
     
-    # [FIX INDENTATION HERE]
     with tab1:
         st.subheader("🔍 Dettagli Servizio per Cliente")
+        # Il codice interno a 'with tab1' è indentato una volta in più
         client_id_list = [''] + assegnazioni_df['ID Prenotazione'].dropna().unique().tolist()
-        selected_client_id = st.selectbox("Seleziona il Codice Identificativo del Cliente:", client_id_list)
+        # ... (il resto del codice) ...
         
         if selected_client_id:
             client_details = assegnazioni_df[assegnazioni_df['ID Prenotazione'] == selected_client_id]
