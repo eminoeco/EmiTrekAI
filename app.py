@@ -45,15 +45,30 @@ st.markdown(
         background-color: #F0F8FF; /* Alice Blue - Azzurrino Chiaro */
     }
     .big-font {
-        font-size:20px !important;
+        font-size: 20px !important;
         font-weight: bold;
     }
-    .driver-card {
-        padding: 15px;
-        border-radius: 10px;
-        box-shadow: 2px 2px 10px rgba(0,0,0,0.1);
-        margin-bottom: 15px;
+    
+    /* NUOVI STILI PER SCHEDE PIÙ PICCOLE */
+    .card-title-font {
+        font-size: 16px !important; 
+        font-weight: bold;
+        margin-bottom: 5px; /* Spazio ridotto */
     }
+    .driver-card {
+        padding: 8px; /* Ridotto da 15px */
+        border-radius: 8px; /* Arrotondamento minore */
+        box-shadow: 1px 1px 5px rgba(0,0,0,0.1); /* Ombra più leggera */
+        margin-bottom: 8px; /* Ridotto da 15px */
+        line-height: 1.2; /* Linea più stretta */
+        height: 100%; /* Assicura che tutte le carte abbiano la stessa altezza, se necessario */
+    }
+    .driver-card p {
+        font-size: 12px; /* Dettagli più piccoli */
+        margin: 0; /* Rimuove margini predefiniti */
+    }
+    /* FINE NUOVI STILI */
+    
     div.stDataFrame {
         font-size: 12px;
     }
@@ -63,7 +78,7 @@ st.markdown(
 )
 # -----------------------------------------------------------------------------
 
-# --- FUNZIONI DI SUPPORTO (OMESSE PER BREVITÀ) ---
+# --- FUNZIONI DI SUPPORTO ---
 def read_excel_file(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'):
@@ -241,10 +256,11 @@ else:
     
     st.markdown("---")
 
-    # --- Sezione Operatori/Autisti con Schede Colorate e Emoji ---
+    # --- Sezione Operatori/Autisti con Schede Colorate e Emoji (DIMENSIONI RIDOTTE) ---
     st.subheader("🧑‍✈️ I Nostri Operatori NCC")
     
     drivers_unique = df_risorse['Autista'].unique()
+    # Usiamo un numero massimo di colonne per evitare che diventino troppo sottili con molti autisti, Streamlit le gestirà
     drivers_overview_cols = st.columns(len(drivers_unique)) 
     
     for i, driver in enumerate(drivers_unique):
@@ -257,7 +273,7 @@ else:
 
             st.markdown(f"""
             <div class="driver-card" style="background-color: {driver_color}; color: white;">
-                <p class='big-font'>{driver} {vehicle_emoji}</p>
+                <p class='card-title-font'>{driver} {vehicle_emoji}</p>
                 <p>Veicolo: {driver_info['Tipo Veicolo']}</p>
                 <p>Fine Servizio Ore: {driver_info['Prossima Disponibilità'].strftime('%H:%M')}</p>
                 <p>Servizi Assegnati: {num_servizi}</p>
@@ -280,10 +296,13 @@ else:
         assigned_df.reset_index(drop=True, inplace=True)
         assigned_df['Ora Fine Servizio'] = assigned_df.apply(calculate_end_time, axis=1)
         
+        # FIX: Assicurati che 'Indirizzo Prelievo' sia usato come partenza se presente, altrimenti 'FCO'
+        partenza_col = assigned_df.get('Indirizzo Prelievo', pd.Series('FCO', index=assigned_df.index)).fillna('FCO')
+        
         display_df = pd.DataFrame({
             'Autista': assigned_df['Autista Assegnato'].fillna('-'),
             'Cliente': assigned_df.get('ID Prenotazione', pd.Series('-', index=assigned_df.index)),
-            'Partenza': assigned_df.get('Indirizzo Prelievo', pd.Series('FCO', index=assigned_df.index)).fillna('FCO'),
+            'Partenza': partenza_col,
             'Ora Partenza': assigned_df['Ora Effettiva Prelievo'].apply(
                 lambda x: x.strftime('%H:%M') if pd.notna(x) and hasattr(x, 'strftime') else '-'
             ),
@@ -328,7 +347,7 @@ else:
     st.markdown("---")
 
     # =============================================================================
-    # REPORT INDIVIDUALE AUTISTA (ACCESSIBILE PERCHÉ DISPLAY_DF È DEFINITO)
+    # REPORT INDIVIDUALE AUTISTA 
     # =============================================================================
     st.subheader("Report Individuale Autista")
 
@@ -355,7 +374,6 @@ else:
 
             oggi = datetime.now().strftime("%d-%m-%Y")
             
-            # (Codice PDF e Excel omesso per brevità nel messaggio, ma è nel codice finale)
             try:
                 # Per reportlab (PDF)
                 from reportlab.lib.pagesizes import A4
@@ -394,7 +412,8 @@ else:
                     mime="application/pdf"
                 )
             except ImportError:
-                st.info("Installare 'reportlab' per generare il PDF.")
+                # Questo blocco è necessario solo se reportlab non è installato
+                pass 
 
             # Excel
             excel_buffer = BytesIO()
