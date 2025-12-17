@@ -8,11 +8,11 @@ import re
 st.set_page_config(layout="wide", page_title="Dispatcher AI | SaaS Agnostic", page_icon="🚐")
 
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
-CAPACITA = {'berlina': 3, 'suv': 3, 'minivan': 7, 'van': 7, 'auto': 3}  # Chiavi in minuscolo per robustezza
+CAPACITA = {'berlina': 3, 'suv': 3, 'minivan': 7, 'van': 7, 'auto': 3}  # Chiavi in minuscolo
 
 # --- FUNZIONE GOOGLE MAPS ---
 def get_gmaps_info(origin, destination):
-    if not origin or not destination:
+    if not origin or not destination or pd.isna(origin) or pd.isna(destination):
         return 30, "Indirizzo mancante"
     try:
         if "Maps_API_KEY" not in st.secrets:
@@ -32,11 +32,9 @@ def get_gmaps_info(origin, destination):
 
 # --- MOTORE DI DISPATCH ---
 def run_dispatch(df_prenotazioni, df_flotta, mapping):
-    # Normalizza nomi colonne
     pren = df_prenotazioni.rename(columns=mapping['pren']).copy()
     flotta = df_flotta.rename(columns=mapping['flotta']).copy()
 
-    # Colonne obbligatorie con fallback
     required_pren = ['id', 'ora', 'tipo_veicolo', 'prelievo', 'destinazione']
     required_flotta = ['autista', 'disponibile_da', 'tipo_veicolo', 'id_veicolo']
 
@@ -49,22 +47,23 @@ def run_dispatch(df_prenotazioni, df_flotta, mapping):
             st.error(f"Colonna obbligatoria nella flotta: {col}")
             return pd.DataFrame()
 
-    # Opzionali
     if 'passeggeri' not in pren.columns:
         pren['passeggeri'] = 1
     if 'posizione_iniziale' not in flotta.columns:
-        flotta['posizione_iniziale'] = "Roma Centro"  # Fallback generico
+        flotta['posizione_iniziale'] = "Roma Centro"
 
-    # Parsing orari
     def parse_time(t):
-        if pd.isna(t): return datetime.combine(datetime.today(), datetime.min.time())
+        if pd.isna(t):
+            return datetime.combine(datetime.today(), datetime.min.time())
         if isinstance(t, str):
             t = t.strip().replace('.', ':')
             for fmt in ('%H:%M', '%H:%M:%S'):
-                try: return datetime.strptime(t, fmt)
-                except: pass
-        if isinstance(t, (datetime, pd.Timestamp)):
-            return t if t.time() != datetime.min.time() else datetime.combine(datetime.today(), t.time())
+                try:
+                    return datetime.strptime(t, fmt)
+                except:
+                    pass
+        if hasattr(t, 'time'):
+            return datetime.combine(datetime.today(), t.time())
         return datetime.combine(datetime.today(), datetime.min.time())
 
     pren['dt_richiesta'] = pren['ora'].apply(parse_time)
@@ -74,12 +73,12 @@ def run_dispatch(df_prenotazioni, df_flotta, mapping):
     pren = pren.sort_values('dt_richiesta')
     risultati = []
 
-    # Raggruppa per pooling: stesso orario (±5 min tolleranza opzionale, qui esatto per semplicità), stesso percorso e tipo
+    # Pooling con tolleranza 5 minuti
     pren['gruppo_key'] = list(zip(
-        pren['dt_richiesta'].dt.round('5min'),  # Tolleranza 5 min per pooling realistico
+        pren['dt_richiesta'].dt.floor('5min'),
         pren['prelievo'],
         pren['destinazione'],
-        pren['tipo_veicolo'].str.lower()
+        pren['tipo_veicolo'].str.lower().str.strip()
     ))
 
     for (dt_key, prelievo, destinazione, tipo_v), group in pren.groupby('gruppo_key'):
@@ -88,17 +87,18 @@ def run_dispatch(df_prenotazioni, df_flotta, mapping):
         capacita_max = CAPACITA.get(tipo_v.lower(), 4)
 
         if tot_pax > capacita_max:
-            st.warning(f"Gruppo {group['id'].tolist()} richiede {tot_pax} pax ma {tipo_v} ha capienza {capacita_max}. Verranno assegnati separatamente.")
-            # In caso di overflow, tratta singolarmente (semplice fallback)
-            for _, single in group.iterrows():
-                risultati.extend(assign_single(single, flotta, pren, risultati))
+            st.warning(f"Gruppo {group['id'].tolist()} supera la capacità ({tot_pax}/{capacita_max}). Assegno singolarmente.")
+            for _, row in group.iterrows():
+                assigned = assign_single(row, flotta)
+                if assigned:
+                    risultati.append(assigned)
             continue
 
-        # Assegna gruppo
-        assigned = assign_group(group, dt_key, prelievo, destinazione, tipo_v, tot_pax, flotta)
-        risultati.extend(assigned)
+        assigned_rows = assign_group(group, dt_key, prelievo, destinazione, tipo_v, tot_pax, flotta)
+        risultati.extend(assigned_rows)
 
     return pd.DataFrame(risultati)
+
 
 def assign_group(group, dt_richiesta, prelievo, destinazione, tipo_v, tot_pax, flotta):
     best_idx = None
@@ -117,7 +117,7 @@ def assign_group(group, dt_richiesta, prelievo, destinazione, tipo_v, tot_pax, f
             log = {'pronto': pronto, 'provenienza': aut['pos_attuale']}
 
     if best_idx is None:
-        return []  # Nessun veicolo disponibile
+        return []
 
     dur_corsa, itinerario = get_gmaps_info(prelievo, destinazione)
     partenza = max(dt_richiesta, log['pronto'])
@@ -141,16 +141,19 @@ def assign_group(group, dt_richiesta, prelievo, destinazione, tipo_v, tot_pax, f
             'Provenienza': log['provenienza']
         })
 
-    # Aggiorna flotta
     flotta.at[best_idx, 'dt_disp'] = arrivo
     flotta.at[best_idx, 'pos_attuale'] = destinazione
-
     return rows
 
-def assign_single(single_row, flotta, pren_df, current_results):
-    # Fallback semplice per singoli (senza pooling forzato)
-    return assign_group(pd.DataFrame([single_row]), single_row['dt_richiesta'], single_row['prelievo'],
-                        single_row['destinazione'], single_row['tipo_veicolo'].capitalize(), single_row['passeggeri'], flotta)
+
+def assign_single(single_row, flotta):
+    fake_group = pd.DataFrame([single_row])
+    return assign_group(fake_group, single_row['dt_richiesta'], single_row['prelievo'],
+                        single_row['destinazione'], single_row['tipo_veicolo'].capitalize(),
+                        single_row['passeggeri'], flotta)[0] if assign_group(fake_group, single_row['dt_richiesta'],
+                        single_row['prelievo'], single_row['destinazione'],
+                        single_row['tipo_veicolo'].capitalize(), single_row['passeggeri'], flotta) else None
+
 
 # --- INTERFACCIA ---
 st.title("🚐 Dispatcher AI | Motore di Smistamento Agnostic")
@@ -169,26 +172,26 @@ if 'risultati' not in st.session_state:
             df_p = pd.read_excel(file_pren)
             df_f = pd.read_excel(file_flotta)
 
-            st.success("File caricati! Ora mappa le colonne obbligatorie.")
+            st.success("File caricati correttamente! Mappa le colonne.")
 
             cols_p = df_p.columns.tolist()
             cols_f = df_f.columns.tolist()
 
             with st.expander("🔧 Mappatura colonne Prenotazioni", expanded=True):
                 map_p = {
-                    'id': st.selectbox("Colonna ID Prenotazione", cols_p, index=cols_p.index(next((c for c in cols_p if 'id' in c.lower()), cols_p[0])) if any('id' in c.lower() for c in cols_p) else 0),
-                    'ora': st.selectbox("Colonna Ora Arrivo/Richiesta (hh:mm)", cols_p, index=cols_p.index(next((c for c in cols_p if any(k in c.lower() for k in ['ora', 'time', 'arrivo']), cols_p[0]))),
-                    'tipo_veicolo': st.selectbox("Colonna Tipo Veicolo Richiesto", cols_p, index=0),
-                    'prelievo': st.selectbox("Colonna Indirizzo Prelievo/Partenza", cols_p),
-                    'destinazione': st.selectbox("Colonna Destinazione Finale", cols_p),
+                    'id': st.selectbox("ID Prenotazione / Codice", cols_p, index=0),
+                    'ora': st.selectbox("Ora Arrivo / Richiesta (hh:mm)", cols_p, index=0),
+                    'tipo_veicolo': st.selectbox("Tipo Veicolo Richiesto", cols_p, index=0),
+                    'prelievo': st.selectbox("Indirizzo Prelievo / Partenza", cols_p, index=0),
+                    'destinazione': st.selectbox("Destinazione Finale", cols_p, index=0),
                 }
 
-            with st.expander("🔧 Mappatura colonne Flotta"):
+            with st.expander("🔧 Mappatura colonne Flotta", expanded=True):
                 map_f = {
-                    'autista': st.selectbox("Colonna Nome Autista", cols_f),
-                    'disponibile_da': st.selectbox("Colonna Disponibile Da (hh:mm)", cols_f),
-                    'tipo_veicolo': st.selectbox("Colonna Tipo Veicolo", cols_f),
-                    'id_veicolo': st.selectbox("Colonna ID/Targa Veicolo", cols_f),
+                    'autista': st.selectbox("Nome Autista", cols_f, index=0),
+                    'disponibile_da': st.selectbox("Disponibile Da (hh:mm)", cols_f, index=0),
+                    'tipo_veicolo': st.selectbox("Tipo Veicolo", cols_f, index=0),
+                    'id_veicolo': st.selectbox("ID / Targa Veicolo", cols_f, index=0),
                 }
 
             if st.button("🚀 CALCOLA CRONOPROGRAMMA", type="primary", use_container_width=True):
@@ -198,9 +201,9 @@ if 'risultati' not in st.session_state:
                         st.session_state['risultati'] = risultati
                         st.rerun()
                     else:
-                        st.error("Nessuna assegnazione possibile o errore nei dati.")
+                        st.error("Impossibile assegnare corse. Controlla i dati o la disponibilità.")
         except Exception as e:
-            st.error(f"Errore caricamento: {str(e)}")
+            st.error(f"Errore nel caricamento: {str(e)}")
 else:
     df = st.session_state['risultati']
 
@@ -213,15 +216,16 @@ else:
 
     st.subheader("🗓️ Cronoprogramma Operativo")
     display = df[['Autista', 'ID', 'Mezzo', 'Da', 'Partenza', 'A', 'Arrivo', 'Status', 'Passeggeri', 'Gruppo']]
-    st.dataframe(display.style.apply(lambda x: [f"background-color: {color_map.get(x.Autista, '#333')}; color: white; font-weight: bold" for _ in x], axis=1),
-                 use_container_width=True)
+    st.dataframe(display.style.apply(
+        lambda x: [f"background-color: {color_map.get(x.Autista, '#333')}; color: white; font-weight: bold" for _ in x], axis=1),
+        use_container_width=True)
 
     st.divider()
 
     c1, c2 = st.columns(2)
     with c1:
         st.header("🕵️ Dettaglio Autista")
-        aut = st.selectbox("Seleziona autista", unique_drivers)
+        aut = st.selectbox("Seleziona autista", unique_drivers, key="aut_select")
         for _, r in df[df['Autista'] == aut].iterrows():
             with st.expander(f"Corse {r['ID']} → Partenza {r['Partenza']} (Pax: {r['Passeggeri']})"):
                 st.write(f"📍 A vuoto da: **{r['Provenienza']}**")
@@ -230,6 +234,6 @@ else:
 
     with c2:
         st.header("🛣️ Dettaglio Percorso")
-        id_sel = st.selectbox("Seleziona ID", df['ID'].unique())
+        id_sel = st.selectbox("Seleziona ID prenotazione", df['ID'].unique(), key="id_select")
         info = df[df['ID'] == id_sel].iloc[0]
-        st.info(f"Itinerario reale (traffico incluso):\n\n{info['Itinerario']}")
+        st.info(f"Itinerario reale (con traffico):\n\n{info['Itinerario']}")
