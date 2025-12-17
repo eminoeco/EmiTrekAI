@@ -30,7 +30,7 @@ def get_gmaps_info(origin, destination):
         return 30, "Calcolo GPS Standard"
     return 30, "Non disponibile"
 
-# --- MOTORE DI DISPATCH CON LOGICA ANTI-ABBANDONO E PROSSIMITÀ ---
+# --- MOTORE DI DISPATCH ---
 def run_dispatch(df_c, df_f):
     df_c.columns = df_c.columns.str.strip()
     df_f.columns = df_f.columns.str.strip()
@@ -59,7 +59,7 @@ def run_dispatch(df_c, df_f):
         autisti_idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == tipo_v]
 
         for f_idx, aut in autisti_idonei.iterrows():
-            # PRIORITÀ 1: POOLING
+            # CAR POOLING
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           not pd.isna(aut['Last_Time']) and
                           abs((aut['Last_Time'] - riga['DT_Richiesta']).total_seconds()) <= 300 and 
@@ -67,22 +67,19 @@ def run_dispatch(df_c, df_f):
 
             if is_pooling:
                 best_aut_idx = f_idx
-                best_match_info = {'pronto': riga['DT_Richiesta'], 'da': "Pooling", 'dur_vuoto': 0, 'ritardo': 0}
+                best_match_info = {'pronto': riga['DT_Richiesta'], 'da': "Car Pooling", 'dur_vuoto': 0, 'ritardo': 0}
                 break
 
-            # Calcolo Tempi (15m buffer scarico incorporato in DT_Disp)
+            # CALCOLO TEMPI
             if aut['Servizi_Count'] == 0:
                 dur_v = 0
                 ora_pronto = riga['DT_Richiesta']
             else:
                 dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
-                # Buffer 15m per prelievo/accoglienza
+                # Aggiungiamo 15 minuti per il tempo di prelievo/accoglienza
                 ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 15)
 
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
-            
-            # Ragionamento AI: Priorità a chi è puntuale, poi a chi è più vicino
-            # Usiamo un peso elevato per il ritardo per assicurarci che il sistema cerchi sempre il meno ritardatario
             punteggio = ritardo * 5000 + dur_v 
 
             if punteggio < min_punteggio:
@@ -98,7 +95,7 @@ def run_dispatch(df_c, df_f):
         if best_aut_idx is not None:
             dur_p, itinerario_p = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
             partenza_eff = max(riga['DT_Richiesta'], best_match_info['pronto'])
-            # Buffer 15m scarico finale
+            # Aggiungiamo 15 minuti per lo scarico cliente
             arrivo_eff = partenza_eff + timedelta(minutes=dur_p + 15)
 
             res_list.append({
@@ -141,8 +138,6 @@ else:
         del st.session_state['risultati']; st.rerun()
 
     df = st.session_state['risultati']
-    
-    # CORREZIONE ERRORE ATTRIBUTO: Convertiamo entrambi in datetime
     df['Partenza'] = pd.to_datetime(df['Partenza'])
     df['Arrivo'] = pd.to_datetime(df['Arrivo'])
     
@@ -178,19 +173,24 @@ else:
         for _, r in df[df['Autista'] == sel_aut].iterrows():
             with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=True):
                 st.write(f"📍 Proviene da: **{r['Provenienza']}**")
-                st.write(f"⏱️ Tempo a vuoto: **{r['Minuti_Vuoto']} min**")
-                st.write(f"⏳ Buffer prelievo: **15 min**")
-                st.write(f"⏱️ Viaggio cliente: **{r['Minuti_Pieno']} min**")
-                st.write(f"⏳ Buffer scarico: **15 min**")
+                if r['Minuti_Vuoto'] > 0:
+                    st.write(f"⏱️ Tempo guida necessario: **{r['Minuti_Vuoto']} min**")
+                    st.write(f"⏳ Tempo accoglienza e prelievo: **15 min**")
+                
+                st.divider()
+                st.write(f"⏱️ Tempo viaggio con cliente: **{r['Minuti_Pieno']} min**")
+                st.write(f"⏳ Tempo scarico clienti e pulizia: **15 min**")
+                st.write(f"✅ Autista libero dalle: **{r['Arrivo'].strftime('%H:%M')}**")
 
     with col_cli:
         st.header("📍 Dettaglio Cliente")
         sel_id = st.selectbox("ID Prenotazione:", df['ID'].unique())
         info = df[df['ID'] == sel_id].iloc[0]
         
+        # FIX ERROR: Usiamo .dt.total_seconds() per la colonna
         altri_pax = df[(df['Autista'] == info['Autista']) & 
                        (df['A'] == info['A']) &
-                       (abs((df['Partenza'] - info['Partenza']).total_seconds()) <= 300) &
+                       (abs((df['Partenza'] - info['Partenza']).dt.total_seconds()) <= 300) &
                        (df['ID'] != info['ID'])]['ID'].tolist()
         
         st.success(f"👤 **Autista:** {info['Autista']}")
@@ -198,6 +198,6 @@ else:
         st.markdown(f"📍 **Partenza:** {info['Da']} (**{info['Partenza'].strftime('%H:%M')}**)")
         st.markdown(f"🏁 **Arrivo:** {info['A']}")
         if altri_pax:
-            st.warning(f"👥 **Pooling:** {', '.join(map(str, altri_pax))}")
+            st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
         else:
             st.info("🚘 **Servizio Singolo**")
