@@ -4,12 +4,12 @@ from datetime import datetime, timedelta
 import googlemaps
 import re
 
-# --- CONFIGURAZIONE E SICUREZZA (DA SECRETS) ---
+# --- CONFIGURAZIONE E SICUREZZA ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Fleet Dispatcher", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
 def check_password():
-    """Verifica le credenziali usando i Secrets di Streamlit (nccroma / clientepass)"""
+    """Verifica le credenziali leggendo dalla tabella [users.nccroma] dei Secrets"""
     if "password_correct" not in st.session_state:
         st.subheader("🔒 Accesso Riservato EmiTrekAI")
         col1, col2 = st.columns(2)
@@ -19,12 +19,18 @@ def check_password():
             pwd_input = st.text_input("Password", type="password")
         
         if st.button("ACCEDI"):
-            # Legge direttamente dai tuoi Secrets impostati su Streamlit
-            if user_input == st.secrets["username"] and pwd_input == st.secrets["password"]:
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.error("🚫 Credenziali non valide. Controlla i Secrets di Streamlit.")
+            # Legge dalla struttura corretta: [users.USERNAME]
+            try:
+                if user_input in st.secrets["users"]:
+                    if pwd_input == st.secrets["users"][user_input]["password"]:
+                        st.session_state["password_correct"] = True
+                        st.rerun()
+                    else:
+                        st.error("🚫 Password errata.")
+                else:
+                    st.error("🚫 Utente non trovato.")
+            except KeyError:
+                st.error("❌ Errore di configurazione nei Secrets (Tabella 'users' non trovata).")
         return False
     return True
 
@@ -42,7 +48,8 @@ def get_gmaps_info(origin, destination):
         if res:
             leg = res[0]['legs'][0]
             durata = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
-            if durata > 120: durata = 45 # Protezione anti-errore
+            # Protezione anti-errore gravissimo: se Google dà tempi assurdi (es. 272 min), forza 45m
+            if durata > 120: durata = 45 
             return durata, f"Percorso: {leg['distance']['text']}"
     except Exception:
         return 40, "Stima prudenziale (Errore Google)"
@@ -105,7 +112,6 @@ def run_dispatch(df_c, df_f):
 # --- ESECUZIONE ---
 if check_password():
     st.title("🚐 EmiTrekAI | SaaS Fleet Dispatcher")
-
     if 'risultati' not in st.session_state:
         st.subheader("📂 Caricamento Dati")
         c1, c2 = st.columns(2)
@@ -118,13 +124,13 @@ if check_password():
     else:
         if st.button("🔄 NUOVA ANALISI"):
             del st.session_state['risultati']; st.rerun()
-
         df = st.session_state['risultati']
         df['Partenza'] = pd.to_datetime(df['Partenza'])
         df['Arrivo'] = pd.to_datetime(df['Arrivo'])
         unique_drivers = df['Autista'].unique()
         driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
+        # BOX RIEPILOGO COLORATI
         st.write("### 📊 Riepilogo Flotta")
         cols = st.columns(len(unique_drivers))
         for i, autista in enumerate(unique_drivers):
@@ -152,6 +158,7 @@ if check_password():
             st.header("🕵️ Spostamenti Autista")
             sel_aut = st.selectbox("Seleziona Autista:", unique_drivers)
             for _, r in df[df['Autista'] == sel_aut].iterrows():
+                # Tab chiuse
                 with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=False):
                     st.write(f"📍 Proviene da: **{r['Provenienza']}**")
                     if r['M_Vuoto'] > 0:
@@ -166,7 +173,14 @@ if check_password():
             st.header("📍 Dettaglio Cliente")
             sel_id = st.selectbox("ID Prenotazione:", df['ID'].unique())
             info = df[df['ID'] == sel_id].iloc[0]
+            altri_pax = df[(df['Autista'] == info['Autista']) & (df['A'] == info['A']) & 
+                           (abs((df['Partenza'] - info['Partenza']).dt.total_seconds()) <= 300) & (df['ID'] != info['ID'])]['ID'].tolist()
             st.success(f"👤 **Autista:** {info['Autista']}")
             st.write(f"🏢 **Veicolo:** {info['Veicolo']}")
             st.markdown(f"📍 **Partenza:** {info['Da']} (**{info['Partenza'].strftime('%H:%M')}**)")
+            # Voce Destinazione ripristinata
             st.markdown(f"🏁 **Destinazione:** {info['A']} (**{info['Arrivo'].strftime('%H:%M')}**)")
+            if altri_pax:
+                st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
+            else:
+                st.info("🚘 **Stato:** Servizio Singolo")
