@@ -24,7 +24,7 @@ def get_gmaps_info(origin, destination):
         if res:
             leg = res[0]['legs'][0]
             durata = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
-            # Protezione contro errori API gravissimi (es. 272 min per FCO-Roma)
+            # Protezione contro errori API gravissimi (es. 272 min per tratte urbane)
             if durata > 120: durata = 45 
             return durata, f"Percorso: {leg['distance']['text']}"
             
@@ -72,6 +72,7 @@ def run_dispatch(df_c, df_f):
                 dur_v = 0; ora_pronto = riga['DT_Richiesta']
             else:
                 dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
+                # 15 min Tempo Accoglienza
                 ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 15)
 
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
@@ -84,6 +85,7 @@ def run_dispatch(df_c, df_f):
         if best_aut_idx is not None:
             dur_p, _ = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
             partenza_eff = max(riga['DT_Richiesta'], best_match_info['pronto'])
+            # 15 min Tempo Scarico
             arrivo_eff = partenza_eff + timedelta(minutes=dur_p + 15)
 
             res_list.append({
@@ -113,7 +115,6 @@ st.title("🚐 EmiTrekAI | SaaS Fleet Dispatcher")
 if 'risultati' not in st.session_state:
     st.subheader("📂 Caricamento Dati")
     c1, c2 = st.columns(2)
-    # Corretto NameError: da col2 a c2
     with c1: f_c = st.file_uploader("Prenotazioni", type=['xlsx'])
     with c2: f_f = st.file_uploader("Flotta", type=['xlsx'])
     if f_c and f_f:
@@ -130,6 +131,21 @@ else:
     unique_drivers = df['Autista'].unique()
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
+    # --- BOX RIEPILOGO COLORATI ---
+    st.write("### 📊 Riepilogo Flotta")
+    cols = st.columns(len(unique_drivers))
+    for i, autista in enumerate(unique_drivers):
+        servizi = len(df[df['Autista'] == autista])
+        mezzo = df[df['Autista'] == autista]['Mezzo'].iloc[0]
+        cor = driver_color_map[autista]
+        with cols[i]:
+            st.markdown(f"""<div style="background-color:{cor}; padding:15px; border-radius:10px; text-align:center; color:white;">
+                <small style="opacity:0.8;">{autista}</small><br>
+                <strong style="font-size:22px;">{mezzo}</strong><br>
+                <div style="margin-top:5px; font-weight:bold;">Servizi: {servizi}</div>
+                </div>""", unsafe_allow_html=True)
+
+    st.divider()
     st.subheader("🗓️ Tabella di Marcia")
     df_tab = df.copy()
     df_tab['Inizio'] = df_tab['Partenza'].dt.strftime('%H:%M')
@@ -144,7 +160,6 @@ else:
         st.header("🕵️ Spostamenti Autista")
         sel_aut = st.selectbox("Seleziona Autista:", unique_drivers)
         for _, r in df[df['Autista'] == sel_aut].iterrows():
-            # Expander chiusi di default
             with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=False):
                 st.write(f"📍 Proviene da: **{r['Provenienza']}**")
                 if r['M_Vuoto'] > 0:
@@ -166,7 +181,6 @@ else:
         st.success(f"👤 **Autista:** {info['Autista']}")
         st.write(f"🏢 **Veicolo:** {info['Veicolo']}")
         st.markdown(f"📍 **Partenza:** {info['Da']} (**{info['Partenza'].strftime('%H:%M')}**)")
-        # Voce Destinazione ripristinata
         st.markdown(f"🏁 **Destinazione:** {info['A']} (**{info['Arrivo'].strftime('%H:%M')}**)")
         if altri_pax:
             st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
