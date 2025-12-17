@@ -5,7 +5,7 @@ import googlemaps
 import re
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Pro Safe", page_icon="🚐")
+st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Fleet Dispatcher", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
@@ -27,8 +27,8 @@ def get_gmaps_info(origin, destination):
             steps = [re.sub('<[^<]+?>', '', s['html_instructions']) for s in leg['steps']]
             itinerario = " ➡️ ".join([s.split("verso")[0].strip() for s in steps if any(k in s for k in ["Via", "Viale", "A91", "Raccordo", "Autostrada"])][:3])
             return durata, f"{itinerario} ({distanza})"
-    except Exception:
-        return 30, "Calcolo GPS Standard"
+    except Exception as e:
+        return 30, f"Errore tecnico API"
     return 30, "Non disponibile"
 
 # --- MOTORE DI DISPATCH ---
@@ -42,7 +42,8 @@ def run_dispatch(df_c, df_f):
 
     df_c['DT_Richiesta'] = df_c['Ora Arrivo'].apply(parse_t)
     df_f['DT_Disp'] = df_f['Disponibile Da (hh:mm)'].apply(parse_t)
-    df_f['Pos_Attuale'] = BASE_OPERATIVA
+    df_f['Pos_Attuale'] = "BASE"
+    df_f['Servizi_Count'] = 0 
     df_f['Pax_Oggi'] = 0
     df_f['Last_Time'] = pd.NaT
     
@@ -54,10 +55,11 @@ def run_dispatch(df_c, df_f):
         cap_max = CAPACITA.get(tipo_v, 3)
         best_aut_idx = None; min_ritardo = float('inf'); match_info = {}
 
-        for f_idx, aut in df_f.iterrows():
-            if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
-            
-            # LOGICA POOLING OTTIMIZZATA: Tolleranza 5 minuti
+        # Filtro per tipo veicolo
+        autisti_idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == tipo_v]
+
+        for f_idx, aut in autisti_idonei.iterrows():
+            # LOGICA POOLING: Tolleranza 5 min
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           not pd.isna(aut['Last_Time']) and
                           abs((aut['Last_Time'] - riga['DT_Richiesta']).total_seconds()) <= 300 and 
@@ -68,12 +70,19 @@ def run_dispatch(df_c, df_f):
                 match_info = {'pronto': riga['DT_Richiesta'], 'da': "Pooling"}
                 break
 
-            dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
-            ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10)
+            # LOGICA PRIMA CORSA (Carlo CIA)
+            if aut['Servizi_Count'] == 0:
+                dur_v = 0
+                ora_pronto = riga['DT_Richiesta']
+            else:
+                dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
+                ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10)
+
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
+            
             if ritardo < min_ritardo:
                 min_ritardo = ritardo; best_aut_idx = f_idx
-                match_info = {'pronto': ora_pronto, 'da': aut['Pos_Attuale']}
+                match_info = {'pronto': ora_pronto, 'da': aut['Pos_Attuale'] if aut['Servizi_Count'] > 0 else "Primo Servizio"}
 
         if best_aut_idx is not None:
             dur_p, itinerario_p = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
@@ -96,7 +105,9 @@ def run_dispatch(df_c, df_f):
             df_f.at[best_aut_idx, 'DT_Disp'] = arrivo_eff
             df_f.at[best_aut_idx, 'Pos_Attuale'] = riga['Destinazione Finale']
             df_f.at[best_aut_idx, 'Last_Time'] = riga['DT_Richiesta']
+            df_f.at[best_aut_idx, 'Servizi_Count'] += 1
             df_f.at[best_aut_idx, 'Pax_Oggi'] += 1
+            
     return pd.DataFrame(res_list)
 
 # --- INTERFACCIA ---
@@ -120,7 +131,7 @@ else:
     unique_drivers = df['Autista'].unique()
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
-    # --- BOX RIASSUNTIVI ---
+    # --- BOX COLORATI (RIEPILOGO) ---
     st.write("### 📊 Riepilogo Flotta e Servizi")
     cols = st.columns(len(unique_drivers))
     for i, autista in enumerate(unique_drivers):
@@ -152,7 +163,7 @@ else:
         sel_id = st.selectbox("ID Prenotazione:", df['ID'].unique())
         info = df[df['ID'] == sel_id].iloc[0]
         
-        # LOGICA CAR POOLING CORRETTA: Stesso Autista, Stessa Destinazione, Tolleranza 5 min
+        # LOGICA CAR POOLING: Tolleranza 5 min per visualizzazione
         altri_pax = df[(df['Autista'] == info['Autista']) & 
                        (df['A'] == info['A']) &
                        (abs((df['Partenza'] - info['Partenza']).dt.total_seconds()) <= 300) &
@@ -162,9 +173,7 @@ else:
         st.write(f"🏢 **Veicolo Richiesto:** {info['Veicolo_Tipo']}")
         st.markdown(f"📍 **Partenza:** {info['Da']} - **Ore {info['Partenza'].strftime('%H:%M')}**")
         st.markdown(f"🏁 **Destinazione:** {info['A']}")
-        
         if altri_pax:
-            # Corretto il refuso altpax -> altri_pax
             st.warning(f"👥 **Stato:** Car Pooling con ID: {', '.join(map(str, altri_pax))}")
         else:
             st.info("🚘 **Stato:** Servizio Singolo")
