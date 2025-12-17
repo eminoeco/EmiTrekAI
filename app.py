@@ -9,28 +9,23 @@ st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Fleet Dispatcher"
 pd.options.mode.chained_assignment = None
 
 def check_password():
-    """Verifica le credenziali leggendo dalla tabella [users.nccroma] dei Secrets"""
+    """Verifica le credenziali leggendo dalla tabella [users] dei Secrets"""
     if "password_correct" not in st.session_state:
         st.subheader("🔒 Accesso Riservato EmiTrekAI")
         col1, col2 = st.columns(2)
-        with col1:
-            user_input = st.text_input("Username")
-        with col2:
-            pwd_input = st.text_input("Password", type="password")
+        with col1: user_input = st.text_input("Username")
+        with col2: pwd_input = st.text_input("Password", type="password")
         
         if st.button("ACCEDI"):
-            # Legge dalla struttura corretta: [users.USERNAME]
             try:
+                # Struttura Secrets: [users.USERNAME]
                 if user_input in st.secrets["users"]:
                     if pwd_input == st.secrets["users"][user_input]["password"]:
                         st.session_state["password_correct"] = True
                         st.rerun()
-                    else:
-                        st.error("🚫 Password errata.")
-                else:
-                    st.error("🚫 Utente non trovato.")
-            except KeyError:
-                st.error("❌ Errore di configurazione nei Secrets (Tabella 'users' non trovata).")
+                    else: st.error("🚫 Password errata.")
+                else: st.error("🚫 Utente non trovato.")
+            except KeyError: st.error("❌ Configurazione Secrets errata (Tabella 'users' mancante).")
         return False
     return True
 
@@ -40,19 +35,17 @@ CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
 def get_gmaps_info(origin, destination):
     try:
-        if "MAPS_API_KEY" not in st.secrets:
-            return 40, "⚠️ Errore API: Chiave mancante"
+        if "MAPS_API_KEY" not in st.secrets: return 40, "⚠️ Chiave Maps mancante"
         api_key = st.secrets["MAPS_API_KEY"]
         gmaps = googlemaps.Client(key=api_key)
         res = gmaps.directions(origin, destination, mode="driving", departure_time=datetime.now())
         if res:
             leg = res[0]['legs'][0]
             durata = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
-            # Protezione anti-errore gravissimo: se Google dà tempi assurdi (es. 272 min), forza 45m
+            # Protezione anti-errore: se Google sballa i tempi (es. 272 min), forza 45m
             if durata > 120: durata = 45 
             return durata, f"Percorso: {leg['distance']['text']}"
-    except Exception:
-        return 40, "Stima prudenziale (Errore Google)"
+    except Exception: return 40, "Stima prudenziale (Errore Google)"
     return 40, "Stima prudenziale"
 
 def run_dispatch(df_c, df_f):
@@ -68,12 +61,15 @@ def run_dispatch(df_c, df_f):
     df_f['Last_Time'] = pd.NaT
     res_list = []
     df_c = df_c.sort_values(by='DT_Richiesta')
+
     for _, riga in df_c.iterrows():
         tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
         cap_max = CAPACITA.get(tipo_v, 3)
         best_aut_idx = None; min_punteggio = float('inf'); best_match_info = {}
         autisti_idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == tipo_v]
+
         for f_idx, aut in autisti_idonei.iterrows():
+            # 1. PRIORITÀ CAR POOLING
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           not pd.isna(aut['Last_Time']) and
                           abs((aut['Last_Time'] - riga['DT_Richiesta']).total_seconds()) <= 300)
@@ -81,16 +77,25 @@ def run_dispatch(df_c, df_f):
                 best_aut_idx = f_idx
                 best_match_info = {'pronto': riga['DT_Richiesta'], 'da': "Car Pooling", 'dur_vuoto': 0, 'ritardo': 0}
                 break
+
+            # 2. CALCOLO TEMPI
             if aut['Servizi_Count'] == 0:
                 dur_v = 0; ora_pronto = riga['DT_Richiesta']
             else:
                 dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
                 ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 15)
+
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
-            punteggio = ritardo * 5000 + dur_v 
+            
+            # 3. RAGIONAMENTO AI: SATURAZIONE TURNI
+            # Sottraiamo un "bonus" al punteggio se l'autista ha già fatto servizi oggi
+            bonus_attivita = 5000 if aut['Servizi_Count'] > 0 else 0
+            punteggio = (ritardo * 5000) + dur_v - bonus_attivita
+
             if punteggio < min_punteggio:
                 min_punteggio = punteggio; best_aut_idx = f_idx
                 best_match_info = {'pronto': ora_pronto, 'da': aut['Pos_Attuale'] if aut['Servizi_Count'] > 0 else "Primo Servizio", 'dur_vuoto': dur_v, 'ritardo': ritardo}
+
         if best_aut_idx is not None:
             dur_p, _ = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
             partenza_eff = max(riga['DT_Richiesta'], best_match_info['pronto'])
@@ -109,28 +114,30 @@ def run_dispatch(df_c, df_f):
             df_f.at[best_aut_idx, 'Servizi_Count'] += 1
     return pd.DataFrame(res_list)
 
-# --- ESECUZIONE ---
+# --- ESECUZIONE INTERFACCIA ---
 if check_password():
-    st.title("🚐 EmiTrekAI | SaaS Fleet Dispatcher")
+    st.title("🚐 EmiTrekAI | AI Optimized Dispatcher")
+
     if 'risultati' not in st.session_state:
-        st.subheader("📂 Caricamento Dati")
+        st.subheader("📂 Caricamento Dati Operativi")
         c1, c2 = st.columns(2)
-        with c1: f_c = st.file_uploader("Prenotazioni", type=['xlsx'])
-        with c2: f_f = st.file_uploader("Flotta", type=['xlsx'])
+        with c1: f_c = st.file_uploader("Prenotazioni (.xlsx)", type=['xlsx'])
+        with c2: f_f = st.file_uploader("Flotta (.xlsx)", type=['xlsx'])
         if f_c and f_f:
-            if st.button("ELABORA"):
+            if st.button("ELABORA CRONOPROGRAMMA AI"):
                 st.session_state['risultati'] = run_dispatch(pd.read_excel(f_c), pd.read_excel(f_f))
                 st.rerun()
     else:
         if st.button("🔄 NUOVA ANALISI"):
             del st.session_state['risultati']; st.rerun()
+
         df = st.session_state['risultati']
         df['Partenza'] = pd.to_datetime(df['Partenza'])
         df['Arrivo'] = pd.to_datetime(df['Arrivo'])
         unique_drivers = df['Autista'].unique()
         driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
-        # BOX RIEPILOGO COLORATI
+        # BOX RIEPILOGO
         st.write("### 📊 Riepilogo Flotta")
         cols = st.columns(len(unique_drivers))
         for i, autista in enumerate(unique_drivers):
@@ -158,7 +165,6 @@ if check_password():
             st.header("🕵️ Spostamenti Autista")
             sel_aut = st.selectbox("Seleziona Autista:", unique_drivers)
             for _, r in df[df['Autista'] == sel_aut].iterrows():
-                # Tab chiuse
                 with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=False):
                     st.write(f"📍 Proviene da: **{r['Provenienza']}**")
                     if r['M_Vuoto'] > 0:
@@ -178,9 +184,6 @@ if check_password():
             st.success(f"👤 **Autista:** {info['Autista']}")
             st.write(f"🏢 **Veicolo:** {info['Veicolo']}")
             st.markdown(f"📍 **Partenza:** {info['Da']} (**{info['Partenza'].strftime('%H:%M')}**)")
-            # Voce Destinazione ripristinata
             st.markdown(f"🏁 **Destinazione:** {info['A']} (**{info['Arrivo'].strftime('%H:%M')}**)")
-            if altri_pax:
-                st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
-            else:
-                st.info("🚘 **Stato:** Servizio Singolo")
+            if altri_pax: st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
+            else: st.info("🚘 **Servizio Singolo**")
