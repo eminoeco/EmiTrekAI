@@ -8,7 +8,7 @@ import re
 st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Dispatcher", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
-# Palette Colori SaaS e Capacità Veicoli
+# Colori e Capacità
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 BASE_OPERATIVA = "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM"
@@ -16,21 +16,19 @@ BASE_OPERATIVA = "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM"
 # --- FUNZIONE API (CON DEBUG E SYNC SECRETS) ---
 def get_gmaps_info(origin, destination):
     try:
-        # Controllo esistenza chiave nei Secrets
+        # Sincronizzazione con il nome esatto nei tuoi Secrets online
         if "Maps_API_KEY" not in st.secrets:
             return 30, "ERRORE: Maps_API_KEY non trovata nei Secrets"
         
         api_key = st.secrets["Maps_API_KEY"]
         gmaps = googlemaps.Client(key=api_key)
         
-        # Chiamata a Directions API
         res = gmaps.directions(origin, destination, mode="driving", language="it", departure_time=datetime.now())
         
         if res:
             leg = res[0]['legs'][0]
             durata = int(leg['duration_in_traffic']['value'] / 60)
             distanza = leg['distance']['text']
-            # Pulizia itinerario
             steps = [re.sub('<[^<]+?>', '', s['html_instructions']) for s in leg['steps']]
             itinerario = " ➡️ ".join([s.split("verso")[0].strip() for s in steps if any(k in s for k in ["Via", "Viale", "A91", "Raccordo", "Autostrada"])][:3])
             return durata, f"{itinerario} ({distanza})"
@@ -71,25 +69,24 @@ def run_dispatch(df_c, df_f):
         for f_idx, aut in df_f.iterrows():
             if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
             
-            # Logica Pooling: se l'autista sta già andando lì, lo assegniamo (mantenendo riga separata)
+            # Logica Efficienza: raggruppa se orario e meta coincidono
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           aut['Last_Time'] == riga['DT_Richiesta'] and 
                           aut['Pax_Oggi'] < cap_max)
 
             if is_pooling:
                 best_aut_idx = f_idx
-                match_info = {'pronto': riga['DT_Richiesta'], 'vuoto': 0, 'da': "Inviato con gruppo"}
+                match_info = {'pronto': riga['DT_Richiesta'], 'da': "Pooling con gruppo"}
                 break
 
-            # Calcolo tempo a vuoto reale
             dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
-            ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10) # 10m buffer
+            ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10)
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
             
             if ritardo < min_ritardo:
                 min_ritardo = ritardo
                 best_aut_idx = f_idx
-                match_info = {'pronto': ora_pronto, 'vuoto': dur_v, 'da': aut['Pos_Attuale']}
+                match_info = {'pronto': ora_pronto, 'da': aut['Pos_Attuale']}
 
         if best_aut_idx is not None:
             dur_p, itinerario_p = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
@@ -109,7 +106,6 @@ def run_dispatch(df_c, df_f):
                 'Provenienza': match_info['da']
             })
             
-            # Aggiornamento stato autista dinamico
             df_f.at[best_aut_idx, 'DT_Disp'] = arrivo_eff
             df_f.at[best_aut_idx, 'Pos_Attuale'] = riga['Destinazione Finale']
             df_f.at[best_aut_idx, 'Last_Time'] = riga['DT_Richiesta']
@@ -120,24 +116,22 @@ def run_dispatch(df_c, df_f):
 # --- INTERFACCIA ---
 st.title("🚐 EmiTrekAI | Dashboard Dispatcher SaaS")
 
-# Sezione Caricamento che scompare dopo l'invio
 if 'risultati' not in st.session_state:
     st.subheader("📂 Caricamento Dati Operativi")
-    c1, c2 = st.columns(2)
+    c1, col2 = st.columns(2)
     with c1: f_c = st.file_uploader("Upload Prenotazioni (.xlsx)", type=['xlsx'])
-    with c2: f_f = st.file_uploader("Upload Flotta (.xlsx)", type=['xlsx'])
+    with col2: f_f = st.file_uploader("Upload Flotta (.xlsx)", type=['xlsx'])
     
     if f_c and f_f:
         if st.button("CALCOLA CRONOPROGRAMMA", type="primary", use_container_width=True):
             st.session_state['risultati'] = run_dispatch(pd.read_excel(f_c), pd.read_excel(f_f))
             st.rerun()
 else:
-    if st.button("🔄 NUOVO CARICAMENTO"):
+    # Una volta elaborato, il caricamento scompare per pulizia
+    if st.button("🔄 CARICA NUOVI DATI"):
         del st.session_state['risultati']; st.rerun()
 
     df_res = st.session_state['risultati']
-    
-    # Assegnazione Colori Dinamica agli Autisti
     unique_drivers = df_res['Autista'].unique()
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
@@ -147,14 +141,13 @@ else:
 
     st.divider()
     
-    # Sezione Dettagli con Menu a Tendina
     col_aut, col_cli = st.columns(2)
     with col_aut:
         st.header("🕵️ Dettaglio Spostamenti Autista")
         sel_aut = st.selectbox("Seleziona Autista:", unique_drivers)
         for _, r in df_res[df_res['Autista'] == sel_aut].iterrows():
             with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza']}", expanded=True):
-                st.write(f"🔄 Proviene da: **{r['Provenienza']}**")
+                st.write(f"📍 Proviene da: **{r['Provenienza']}**")
     
     with col_cli:
         st.header("📍 Dettaglio Percorso Cliente")
