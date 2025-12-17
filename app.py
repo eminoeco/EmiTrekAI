@@ -5,240 +5,134 @@ import googlemaps
 import re
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(layout="wide", page_title="Dispatcher AI | Agnostic", page_icon="🚐")
+st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Dispatcher", page_icon="🚐")
 
+# Colori e Capacità
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
-CAPACITA = {'berlina': 3, 'suv': 3, 'minivan': 7, 'van': 7, 'auto': 3}
+CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
+BASE_DEFAULT = "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM"
 
-# --- GOOGLE MAPS ---
+# --- FUNZIONE API (CON LOG DI ERRORE) ---
 def get_gmaps_info(origin, destination):
-    if not origin or not destination or pd.isna(origin) or pd.isna(destination):
-        return 30, "Indirizzo mancante"
     try:
         if "Maps_API_KEY" not in st.secrets:
-            return 30, "Chiave API mancante"
-        gmaps = googlemaps.Client(key=st.secrets["Maps_API_KEY"])
-        res = gmaps.directions(origin, destination, mode="driving", departure_time=datetime.now(), language="it")
-        if res and res[0]['legs']:
+            return 30, "ERRORE: Chiave mancante nei Secrets"
+        
+        api_key = st.secrets["Maps_API_KEY"]
+        gmaps = googlemaps.Client(key=api_key)
+        
+        res = gmaps.directions(origin, destination, mode="driving", language="it", departure_time=datetime.now())
+        
+        if res:
             leg = res[0]['legs'][0]
             durata = int(leg['duration_in_traffic']['value'] / 60)
             distanza = leg['distance']['text']
+            # Estrazione strade principali
             steps = [re.sub('<[^<]+?>', '', s['html_instructions']) for s in leg['steps']]
-            strade = " ➡️ ".join([s.split("verso")[0].strip() for s in steps if any(k in s.lower() for k in ["via", "viale", "autostrada", "raccordo"])][:4])
-            return durata, f"{strade or 'Percorso diretto'} ({distanza})"
+            info_strade = " ➡️ ".join([s.split("verso")[0].strip() for s in steps if any(k in s for k in ["Via", "Viale", "A91", "Raccordo", "Autostrada"])][:3])
+            return durata, f"{info_strade} ({distanza})"
     except Exception as e:
-        return 30, f"Errore Maps: {str(e)[:60]}"
-    return 30, "Non calcolato"
+        return 30, f"ERRORE API: {str(e)[:50]}"
+    return 30, "Percorso non calcolato"
 
-# --- ASSEGNAZIONE SINGOLA O GRUPPO ---
-def assign_to_fleet(group_df, dt_richiesta, prelievo, destinazione, tipo_v, flotta):
-    """Assegna un gruppo (o singolo) al miglior autista disponibile"""
-    tipo_v_lower = tipo_v.lower().strip()
-    best_idx = None
-    min_ritardo = float('inf')
-    best_provenienza = ""
-
-    for idx, aut in flotta.iterrows():
-        if aut['tipo_veicolo'].strip().lower() != tipo_v_lower:
-            continue
-        
-        dur_vuoto, _ = get_gmaps_info(aut['pos_attuale'], prelievo)
-        pronto = aut['dt_disp'] + timedelta(minutes=dur_vuoto + 10)
-        ritardo = max(0, (pronto - dt_richiesta).total_seconds() / 60)
-        
-        if ritardo < min_ritardo:
-            min_ritardo = ritardo
-            best_idx = idx
-            best_provenienza = aut['pos_attuale']
-
-    if best_idx is None:
-        return []  # Nessun autista disponibile
-
-    dur_corsa, itinerario = get_gmaps_info(prelievo, destinazione)
-    partenza = max(dt_richiesta, flotta.at[best_idx, 'dt_disp'] + timedelta(minutes=dur_vuoto + 10))
-    arrivo = partenza + timedelta(minutes=dur_corsa + 15)
-
-    autista = flotta.at[best_idx, 'autista']
-    mezzo = flotta.at[best_idx, 'id_veicolo']
-    ids_gruppo = ", ".join(map(str, group_df['id'].tolist()))
-
-    rows = []
-    for _, riga in group_df.iterrows():
-        rows.append({
-            'Autista': autista,
-            'ID': riga['id'],
-            'Mezzo': mezzo,
-            'Da': prelievo,
-            'Partenza': partenza.strftime('%H:%M'),
-            'A': destinazione,
-            'Arrivo': arrivo.strftime('%H:%M'),
-            'Status': "PUNTUALE" if min_ritardo <= 5 else f"RITARDO {int(min_ritardo)}m",
-            'Passeggeri': riga['passeggeri'],
-            'Gruppo': ids_gruppo if len(group_df) > 1 else "",
-            'Itinerario': itinerario,
-            'Provenienza': best_provenienza
-        })
-
-    # Aggiorna stato autista
-    flotta.at[best_idx, 'dt_disp'] = arrivo
-    flotta.at[best_idx, 'pos_attuale'] = destinazione
-
-    return rows
-
-# --- MOTORE PRINCIPALE ---
-def run_dispatch(df_prenotazioni, df_flotta, mapping):
-    pren = df_prenotazioni.rename(columns=mapping['pren']).copy()
-    flotta = df_flotta.rename(columns=mapping['flotta']).copy()
-
-    # Colonne obbligatorie
-    req_pren = ['id', 'ora', 'tipo_veicolo', 'prelievo', 'destinazione']
-    req_flotta = ['autista', 'disponibile_da', 'tipo_veicolo', 'id_veicolo']
+# --- MOTORE DI DISPATCH ---
+def run_dispatch(df_c, df_f):
+    df_c.columns = df_c.columns.str.strip()
+    df_f.columns = df_f.columns.str.strip()
     
-    for col in req_pren:
-        if col not in pren.columns:
-            st.error(f"Colonna mancante in Prenotazioni: {col}")
-            return pd.DataFrame()
-    for col in req_flotta:
-        if col not in flotta.columns:
-            st.error(f"Colonna mancante in Flotta: {col}")
-            return pd.DataFrame()
+    def parse_t(t):
+        if isinstance(t, str): return datetime.strptime(t.strip().replace('.', ':'), '%H:%M')
+        return datetime.combine(datetime.today(), t)
 
-    # Opzionali
-    if 'passeggeri' not in pren.columns:
-        pren['passeggeri'] = 1
-    if 'posizione_iniziale' not in flotta.columns:
-        flotta['posizione_iniziale'] = "Base operativa"
+    df_c['DT_Richiesta'] = df_c['Ora Arrivo'].apply(parse_t)
+    df_f['DT_Disp'] = df_f['Disponibile Da (hh:mm)'].apply(parse_t)
+    df_f['Pos_Attuale'] = BASE_DEFAULT
+    
+    res_list = []
+    df_c = df_c.sort_values(by='DT_Richiesta')
 
-    # Parsing orari
-    def parse_time(t):
-        if pd.isna(t):
-            return datetime.combine(datetime.today(), datetime.min.time())
-        if isinstance(t, str):
-            t = t.strip().replace('.', ':')
-            for fmt in ('%H:%M', '%H:%M:%S'):
-                try:
-                    return datetime.strptime(t, fmt)
-                except:
-                    pass
-        if hasattr(t, 'time'):
-            return datetime.combine(datetime.today(), t.time())
-        return datetime.combine(datetime.today(), datetime.min.time())
+    for idx, riga in df_c.iterrows():
+        tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
+        
+        best_aut_idx = None
+        min_ritardo = float('inf')
+        info_log = {}
 
-    pren['dt_richiesta'] = pren['ora'].apply(parse_time)
-    flotta['dt_disp'] = flotta['disponibile_da'].apply(parse_time)
-    flotta['pos_attuale'] = flotta['posizione_iniziale']
+        for f_idx, aut in df_f.iterrows():
+            if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
+            
+            # Calcolo tempi reali
+            dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
+            ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10)
+            ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
+            
+            if ritardo < min_ritardo:
+                min_ritardo = ritardo
+                best_aut_idx = f_idx
+                info_log = {'pronto': ora_pronto, 'provenienza': aut['Pos_Attuale']}
 
-    pren = pren.sort_values('dt_richiesta').reset_index(drop=True)
-    risultati = []
+        if best_aut_idx is not None:
+            dur_p, itinerario_p = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
+            partenza_eff = max(riga['DT_Richiesta'], info_log['pronto'])
+            arrivo_eff = partenza_eff + timedelta(minutes=dur_p + 15)
 
-    # Pooling: stesso orario (±5 min), stesso percorso e tipo veicolo
-    pren['pool_key'] = (
-        pren['dt_richiesta'].dt.floor('5min').astype(str) + "_" +
-        pren['prelievo'].astype(str) + "_" +
-        pren['destinazione'].astype(str) + "_" +
-        pren['tipo_veicolo'].str.lower().str.strip()
-    )
+            res_list.append({
+                'Autista': df_f.at[best_aut_idx, 'Autista'],
+                'ID': riga['ID Prenotazione'],
+                'Mezzo': df_f.at[best_aut_idx, 'ID Veicolo'],
+                'Da': riga['Indirizzo Prelievo'],
+                'Partenza': partenza_eff.strftime('%H:%M'),
+                'A': riga['Destinazione Finale'],
+                'Arrivo': arrivo_eff.strftime('%H:%M'),
+                'Status': "PUNTUALE" if min_ritardo <= 5 else f"RITARDO {int(min_ritardo)}m",
+                'Itinerario': itinerario_p,
+                'Provenienza': info_log['provenienza']
+            })
+            
+            df_f.at[best_aut_idx, 'DT_Disp'] = arrivo_eff
+            df_f.at[best_aut_idx, 'Pos_Attuale'] = riga['Destinazione Finale']
 
-    for pool_key, group in pren.groupby('pool_key'):
-        dt_richiesta = group['dt_richiesta'].min()
-        prelievo = group['prelievo'].iloc[0]
-        destinazione = group['destinazione'].iloc[0]
-        tipo_v = group['tipo_veicolo'].iloc[0].capitalize()
-        tot_pax = group['passeggeri'].sum()
-        capacita = CAPACITA.get(tipo_v.lower(), 4)
-
-        if tot_pax > capacita:
-            st.warning(f"Gruppo ID {group['id'].tolist()} supera capacità ({tot_pax}/{capacita}). Assegno singolarmente.")
-            for _, single in group.iterrows():
-                single_group = pd.DataFrame([single])
-                rows = assign_to_fleet(single_group, single['dt_richiesta'], single['prelievo'], single['destinazione'], tipo_v, flotta)
-                risultati.extend(rows)
-        else:
-            rows = assign_to_fleet(group, dt_richiesta, prelievo, destinazione, tipo_v, flotta)
-            risultati.extend(rows)
-
-    return pd.DataFrame(risultati)
+    return pd.DataFrame(res_list)
 
 # --- INTERFACCIA ---
-st.title("🚐 Dispatcher AI | Motore Agnostic")
+st.title("🚐 EmiTrekAI | SaaS Dispatcher")
 
 if 'risultati' not in st.session_state:
-    st.subheader("📂 Carica i file Excel")
-
+    st.subheader("📂 Caricamento File Excel")
     col1, col2 = st.columns(2)
-    with col1:
-        file_pren = st.file_uploader("Prenotazioni clienti", type="xlsx")
-    with col2:
-        file_flotta = st.file_uploader("Flotta autisti", type="xlsx")
-
-    if file_pren and file_flotta:
-        df_p = pd.read_excel(file_pren)
-        df_f = pd.read_excel(file_flotta)
-
-        st.success("File caricati! Mappa le colonne obbligatorie.")
-
-        cols_p = df_p.columns.tolist()
-        cols_f = df_f.columns.tolist()
-
-        with st.expander("Mappatura Prenotazioni", expanded=True):
-            map_pren = {
-                'id': st.selectbox("ID Prenotazione", cols_p),
-                'ora': st.selectbox("Ora Richiesta (hh:mm)", cols_p),
-                'tipo_veicolo': st.selectbox("Tipo Veicolo", cols_p),
-                'prelievo': st.selectbox("Indirizzo Prelievo", cols_p),
-                'destinazione': st.selectbox("Destinazione", cols_p),
-            }
-
-        with st.expander("Mappatura Flotta", expanded=True):
-            map_flotta = {
-                'autista': st.selectbox("Autista", cols_f),
-                'disponibile_da': st.selectbox("Disponibile da (hh:mm)", cols_f),
-                'tipo_veicolo': st.selectbox("Tipo Veicolo", cols_f),
-                'id_veicolo': st.selectbox("ID Veicolo / Targa", cols_f),
-            }
-
+    with col1: f_c = st.file_uploader("Upload Prenotazioni", type=['xlsx'])
+    with col2: f_f = st.file_uploader("Upload Flotta", type=['xlsx'])
+    
+    if f_c and f_f:
         if st.button("CALCOLA CRONOPROGRAMMA", type="primary", use_container_width=True):
-            with st.spinner("Elaborazione..."):
-                df_ris = run_dispatch(df_p, df_f, {'pren': map_pren, 'flotta': map_flotta})
-                if not df_ris.empty:
-                    st.session_state.risultati = df_ris
-                    st.rerun()
-                else:
-                    st.error("Nessuna corsa assegnata. Verifica dati e disponibilità.")
-
+            st.session_state['risultati'] = run_dispatch(pd.read_excel(f_c), pd.read_excel(f_f))
+            st.rerun()
 else:
-    df = st.session_state.risultati
+    if st.button("🔄 CARICA NUOVI FILE"):
+        del st.session_state['risultati']; st.rerun()
 
-    if st.button("Carica nuovi file"):
-        st.session_state.clear()
-        st.rerun()
+    df = st.session_state['risultati']
+    
+    # Colori dinamici per autisti
+    unique_drivers = df['Autista'].unique()
+    color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
-    colors = {aut: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, aut in enumerate(df['Autista'].unique())}
-
-    st.subheader("Cronoprogramma Operativo")
-    display_cols = ['Autista', 'ID', 'Mezzo', 'Da', 'Partenza', 'A', 'Arrivo', 'Status', 'Passeggeri', 'Gruppo']
-    st.dataframe(
-        df[display_cols].style.apply(
-            lambda row: [f"background-color: {colors.get(row.Autista, '#333')}; color: white; font-weight: bold" for _ in row],
-            axis=1
-        ),
-        use_container_width=True
-    )
+    st.subheader("🗓️ Cronoprogramma (Una riga per cliente)")
+    st.dataframe(df[['Autista', 'ID', 'Mezzo', 'Da', 'Partenza', 'A', 'Arrivo', 'Status']].style.apply(
+        lambda x: [f"background-color: {color_map.get(x.Autista)}; color: white; font-weight: bold" for _ in x], axis=1), use_container_width=True)
 
     st.divider()
-
-    c1, c2 = st.columns(2)
-    with c1:
-        st.header("Dettaglio Autista")
-        autista = st.selectbox("Scegli autista", df['Autista'].unique())
-        for _, r in df[df['Autista'] == autista].iterrows():
-            with st.expander(f"ID {r['ID']} - {r['Partenza']} (Pax: {r['Passeggeri']})"):
-                st.write(f"A vuoto da: **{r['Provenienza']}**")
-                if r['Gruppo']:
-                    st.success(f"Pooling: {r['Gruppo']}")
-
-    with c2:
-        st.header("Dettaglio Percorso")
-        id_sel = st.selectbox("Scegli ID", df['ID'].unique())
-        info = df[df['ID'] == id_sel].iloc[0]
-        st.info(f"Itinerario (traffico reale):\n\n{info['Itinerario']}")
+    
+    c_aut, c_cli = st.columns(2)
+    with c_aut:
+        st.header("🕵️ Dettaglio Autista")
+        sel_aut = st.selectbox("Scegli Autista:", unique_drivers)
+        for _, r in df[df['Autista'] == sel_aut].iterrows():
+            with st.expander(f"Corsa {r['ID']} - Partenza ore {r['Partenza']}"):
+                st.write(f"📍 Parte da: **{r['Provenienza']}**")
+    
+    with c_cli:
+        st.header("📍 Dettaglio Percorso")
+        sel_id = st.selectbox("Scegli ID Prenotazione:", df['ID'].unique())
+        info = df[df['ID'] == sel_id].iloc[0]
+        st.info(f"🛣️ **Itinerario Google:** {info['Itinerario']}")
