@@ -11,10 +11,9 @@ pd.options.mode.chained_assignment = None
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
-# --- FUNZIONE API (RIPARATA) ---
+# --- FUNZIONE API (PROTEZIONE ANTI-ERRORE) ---
 def get_gmaps_info(origin, destination):
     try:
-        # Se la chiave non è configurata o l'API risponde con errore 100%
         if "MAPS_API_KEY" not in st.secrets:
             return 40, "⚠️ Errore API: Chiave mancante"
         
@@ -24,13 +23,13 @@ def get_gmaps_info(origin, destination):
         
         if res:
             leg = res[0]['legs'][0]
-            # Estrazione minuti reali. Se il valore è folle, limitiamo a 60 min per sicurezza urbana.
             durata = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
-            if durata > 120: durata = 45 # Protezione anti-errore gravissimo
+            # Protezione contro errori API gravissimi (es. 272 min per FCO-Roma)
+            if durata > 120: durata = 45 
             return durata, f"Percorso: {leg['distance']['text']}"
             
     except Exception:
-        # Fallback di emergenza realistico se Google è bloccato
+        # Fallback se le API sono bloccate (Errore 100%)
         return 40, "Stima prudenziale (Errore Google)"
     return 40, "Stima prudenziale"
 
@@ -60,7 +59,6 @@ def run_dispatch(df_c, df_f):
         autisti_idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == tipo_v]
 
         for f_idx, aut in autisti_idonei.iterrows():
-            # CAR POOLING (Tolleranza 5 min)
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           not pd.isna(aut['Last_Time']) and
                           abs((aut['Last_Time'] - riga['DT_Richiesta']).total_seconds()) <= 300)
@@ -110,13 +108,14 @@ def run_dispatch(df_c, df_f):
     return pd.DataFrame(res_list)
 
 # --- INTERFACCIA ---
-st.title("🚐 EmiTrekAI | SaaS Dispatcher Repair")
+st.title("🚐 EmiTrekAI | SaaS Fleet Dispatcher")
 
 if 'risultati' not in st.session_state:
     st.subheader("📂 Caricamento Dati")
     c1, c2 = st.columns(2)
+    # Corretto NameError: da col2 a c2
     with c1: f_c = st.file_uploader("Prenotazioni", type=['xlsx'])
-    with col2: f_f = st.file_uploader("Flotta", type=['xlsx'])
+    with c2: f_f = st.file_uploader("Flotta", type=['xlsx'])
     if f_c and f_f:
         if st.button("ELABORA"):
             st.session_state['risultati'] = run_dispatch(pd.read_excel(f_c), pd.read_excel(f_f))
@@ -145,7 +144,7 @@ else:
         st.header("🕵️ Spostamenti Autista")
         sel_aut = st.selectbox("Seleziona Autista:", unique_drivers)
         for _, r in df[df['Autista'] == sel_aut].iterrows():
-            # Tab chiuse di default (expanded=False) come richiesto
+            # Expander chiusi di default
             with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=False):
                 st.write(f"📍 Proviene da: **{r['Provenienza']}**")
                 if r['M_Vuoto'] > 0:
@@ -167,7 +166,7 @@ else:
         st.success(f"👤 **Autista:** {info['Autista']}")
         st.write(f"🏢 **Veicolo:** {info['Veicolo']}")
         st.markdown(f"📍 **Partenza:** {info['Da']} (**{info['Partenza'].strftime('%H:%M')}**)")
-        # Aggiunta scritta Destinazione mancante
+        # Voce Destinazione ripristinata
         st.markdown(f"🏁 **Destinazione:** {info['A']} (**{info['Arrivo'].strftime('%H:%M')}**)")
         if altri_pax:
             st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
