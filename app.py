@@ -56,13 +56,18 @@ def run_dispatch(df_c, df_f):
 
         for f_idx, aut in df_f.iterrows():
             if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
+            
+            # LOGICA POOLING OTTIMIZZATA: Tolleranza 5 minuti
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
-                          aut['Last_Time'] == riga['DT_Richiesta'] and 
+                          not pd.isna(aut['Last_Time']) and
+                          abs((aut['Last_Time'] - riga['DT_Richiesta']).total_seconds()) <= 300 and 
                           aut['Pax_Oggi'] < cap_max)
+
             if is_pooling:
                 best_aut_idx = f_idx
                 match_info = {'pronto': riga['DT_Richiesta'], 'da': "Pooling"}
                 break
+
             dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
             ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10)
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
@@ -79,7 +84,7 @@ def run_dispatch(df_c, df_f):
                 'Autista': df_f.at[best_aut_idx, 'Autista'],
                 'ID': riga['ID Prenotazione'],
                 'Mezzo': df_f.at[best_aut_idx, 'ID Veicolo'],
-                'Veicolo_Tipo': tipo_v, # Colonna corretta per evitare KeyError
+                'Veicolo_Tipo': tipo_v,
                 'Da': riga['Indirizzo Prelievo'],
                 'Partenza': partenza_eff,
                 'A': riga['Destinazione Finale'],
@@ -146,14 +151,20 @@ else:
         st.header("📍 Dettaglio Cliente")
         sel_id = st.selectbox("ID Prenotazione:", df['ID'].unique())
         info = df[df['ID'] == sel_id].iloc[0]
-        altri_pax = df[(df['Autista'] == info['Autista']) & (df['Partenza'] == info['Partenza']) & (df['ID'] != info['ID'])]['ID'].tolist()
         
-        # UI RICHIESTA: Luogo/Ora Partenza, Destinazione, Autista, Pooling, Veicolo
+        # LOGICA CAR POOLING CORRETTA: Stesso Autista, Stessa Destinazione, Tolleranza 5 min
+        altri_pax = df[(df['Autista'] == info['Autista']) & 
+                       (df['A'] == info['A']) &
+                       (abs((df['Partenza'] - info['Partenza']).dt.total_seconds()) <= 300) &
+                       (df['ID'] != info['ID'])]['ID'].tolist()
+        
         st.success(f"👤 **Autista Assegnato:** {info['Autista']}")
         st.write(f"🏢 **Veicolo Richiesto:** {info['Veicolo_Tipo']}")
         st.markdown(f"📍 **Partenza:** {info['Da']} - **Ore {info['Partenza'].strftime('%H:%M')}**")
         st.markdown(f"🏁 **Destinazione:** {info['A']}")
+        
         if altri_pax:
-            st.warning(f"👥 **Stato:** Car Pooling con ID: {', '.join(map(str, altpax))}")
+            # Corretto il refuso altpax -> altri_pax
+            st.warning(f"👥 **Stato:** Car Pooling con ID: {', '.join(map(str, altri_pax))}")
         else:
             st.info("🚘 **Stato:** Servizio Singolo")
