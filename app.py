@@ -51,7 +51,7 @@ def run_dispatch(df_c, df_f):
     res_list = []
     df_c = df_c.sort_values(by='DT_Richiesta')
 
-    for _, riga in df_c.iterrows():
+    for idx, riga in df_c.iterrows():
         tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
         cap_max = CAPACITA.get(tipo_v, 3)
         best_aut_idx = None; min_ritardo = float('inf'); match_info = {}
@@ -85,6 +85,7 @@ def run_dispatch(df_c, df_f):
                 'Autista': df_f.at[best_aut_idx, 'Autista'],
                 'ID': riga['ID Prenotazione'],
                 'Mezzo': df_f.at[best_aut_idx, 'ID Veicolo'],
+                'Tipo': tipo_v,
                 'Da': riga['Indirizzo Prelievo'],
                 'Partenza': partenza_eff,
                 'A': riga['Destinazione Finale'],
@@ -118,7 +119,7 @@ else:
         del st.session_state['risultati']; st.rerun()
 
     df = st.session_state['risultati']
-    df['Partenza'] = pd.to_datetime(df['Partenza']) # Prevenzione AttributeError
+    df['Partenza'] = pd.to_datetime(df['Partenza'])
     unique_drivers = df['Autista'].unique()
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
@@ -130,7 +131,6 @@ else:
         mezzo = df[df['Autista'] == autista]['Mezzo'].iloc[0]
         cor = driver_color_map[autista]
         with cols[i]:
-            # Corretto errore unsafe_allow_html
             st.markdown(f"""
                 <div style="background-color:{cor}; padding:12px; border-radius:8px; text-align:center; color:white; border: 1px solid rgba(255,255,255,0.2);">
                     <small style="opacity:0.9;">{autista}</small><br>
@@ -142,7 +142,7 @@ else:
     st.divider()
 
     # --- CRONOPROGRAMMA ---
-    st.subheader("🗓️ Tabella di Marcia (Dettaglio Clienti)")
+    st.subheader("🗓️ Tabella di Marcia")
     df_tab = df.copy()
     df_tab['Partenza'] = df_tab['Partenza'].dt.strftime('%H:%M')
     st.dataframe(df_tab[['Autista', 'ID', 'Mezzo', 'Da', 'Partenza', 'A', 'Arrivo', 'Status']].style.apply(
@@ -165,9 +165,13 @@ else:
         
         altri_pax = df[(df['Autista'] == info['Autista']) & (df['Partenza'] == info['Partenza']) & (df['ID'] != info['ID'])]['ID'].tolist()
         
-        st.success(f"👤 **Autista:** {info['Autista']}")
-        st.info(f"🛣️ **Direzione:** {info['Itinerario']}")
+        # UI PULITA RICHIESTA
+        st.success(f"👤 **Autista Assegnato:** {info['Autista']}")
+        st.write(f"🏢 **Veicolo Richiesto:** {info['Tipo']}")
+        st.markdown(f"📍 **Partenza:** {info['Da']} - **Ore {info['Partenza'].strftime('%H:%M')}**")
+        st.markdown(f"🏁 **Destinazione:** {info['A']}")
+        
         if altri_pax:
-            st.warning(f"👥 **In Car Pooling con:** {', '.join(map(str, altri_pax))}")
+            st.warning(f"👥 **Stato:** Car Pooling con ID: {', '.join(map(str, altri_pax))}")
         else:
-            st.write("🚘 **Servizio Singolo**")
+            st.info("🚘 **Stato:** Servizio Singolo")
