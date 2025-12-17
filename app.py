@@ -17,11 +17,9 @@ def get_gmaps_info(origin, destination):
     try:
         if "MAPS_API_KEY" not in st.secrets:
             return 30, "⚠️ Errore: Chiave non trovata"
-        
         api_key = st.secrets["MAPS_API_KEY"]
         gmaps = googlemaps.Client(key=api_key)
         res = gmaps.directions(origin, destination, mode="driving", language="it", departure_time=datetime.now())
-        
         if res:
             leg = res[0]['legs'][0]
             durata = int(leg['duration_in_traffic']['value'] / 60)
@@ -51,27 +49,23 @@ def run_dispatch(df_c, df_f):
     res_list = []
     df_c = df_c.sort_values(by='DT_Richiesta')
 
-    for idx, riga in df_c.iterrows():
+    for _, riga in df_c.iterrows():
         tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
         cap_max = CAPACITA.get(tipo_v, 3)
         best_aut_idx = None; min_ritardo = float('inf'); match_info = {}
 
         for f_idx, aut in df_f.iterrows():
             if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
-            
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           aut['Last_Time'] == riga['DT_Richiesta'] and 
                           aut['Pax_Oggi'] < cap_max)
-
             if is_pooling:
                 best_aut_idx = f_idx
                 match_info = {'pronto': riga['DT_Richiesta'], 'da': "Pooling"}
                 break
-
             dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
             ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 10)
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
-            
             if ritardo < min_ritardo:
                 min_ritardo = ritardo; best_aut_idx = f_idx
                 match_info = {'pronto': ora_pronto, 'da': aut['Pos_Attuale']}
@@ -85,7 +79,7 @@ def run_dispatch(df_c, df_f):
                 'Autista': df_f.at[best_aut_idx, 'Autista'],
                 'ID': riga['ID Prenotazione'],
                 'Mezzo': df_f.at[best_aut_idx, 'ID Veicolo'],
-                'Tipo': tipo_v,
+                'Veicolo_Tipo': tipo_v, # Colonna corretta per evitare KeyError
                 'Da': riga['Indirizzo Prelievo'],
                 'Partenza': partenza_eff,
                 'A': riga['Destinazione Finale'],
@@ -94,12 +88,10 @@ def run_dispatch(df_c, df_f):
                 'Itinerario': itinerario_p,
                 'Provenienza': match_info['da']
             })
-            
             df_f.at[best_aut_idx, 'DT_Disp'] = arrivo_eff
             df_f.at[best_aut_idx, 'Pos_Attuale'] = riga['Destinazione Finale']
             df_f.at[best_aut_idx, 'Last_Time'] = riga['DT_Richiesta']
             df_f.at[best_aut_idx, 'Pax_Oggi'] += 1
-
     return pd.DataFrame(res_list)
 
 # --- INTERFACCIA ---
@@ -123,7 +115,7 @@ else:
     unique_drivers = df['Autista'].unique()
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
-    # --- RIQUADRI RIASSUNTIVI (BOX COLORATI) ---
+    # --- BOX RIASSUNTIVI ---
     st.write("### 📊 Riepilogo Flotta e Servizi")
     cols = st.columns(len(unique_drivers))
     for i, autista in enumerate(unique_drivers):
@@ -131,17 +123,10 @@ else:
         mezzo = df[df['Autista'] == autista]['Mezzo'].iloc[0]
         cor = driver_color_map[autista]
         with cols[i]:
-            st.markdown(f"""
-                <div style="background-color:{cor}; padding:12px; border-radius:8px; text-align:center; color:white; border: 1px solid rgba(255,255,255,0.2);">
-                    <small style="opacity:0.9;">{autista}</small><br>
-                    <strong style="font-size:18px;">{mezzo}</strong><br>
-                    <div style="margin-top:5px; font-size:14px; font-weight:bold;">Servizi: {servizi}</div>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div style="background-color:{cor}; padding:12px; border-radius:8px; text-align:center; color:white;">
+                <small>{autista}</small><br><strong>{mezzo}</strong><br>Servizi: {servizi}</div>""", unsafe_allow_html=True)
 
     st.divider()
-
-    # --- CRONOPROGRAMMA ---
     st.subheader("🗓️ Tabella di Marcia")
     df_tab = df.copy()
     df_tab['Partenza'] = df_tab['Partenza'].dt.strftime('%H:%M')
@@ -149,7 +134,6 @@ else:
         lambda x: [f"background-color: {driver_color_map.get(x.Autista)}; color: white; font-weight: bold" for _ in x], axis=1), use_container_width=True)
 
     st.divider()
-    
     col_aut, col_cli = st.columns(2)
     with col_aut:
         st.header("🕵️ Spostamenti Autista")
@@ -162,16 +146,14 @@ else:
         st.header("📍 Dettaglio Cliente")
         sel_id = st.selectbox("ID Prenotazione:", df['ID'].unique())
         info = df[df['ID'] == sel_id].iloc[0]
-        
         altri_pax = df[(df['Autista'] == info['Autista']) & (df['Partenza'] == info['Partenza']) & (df['ID'] != info['ID'])]['ID'].tolist()
         
-        # UI PULITA RICHIESTA
+        # UI RICHIESTA: Luogo/Ora Partenza, Destinazione, Autista, Pooling, Veicolo
         st.success(f"👤 **Autista Assegnato:** {info['Autista']}")
-        st.write(f"🏢 **Veicolo Richiesto:** {info['Tipo']}")
+        st.write(f"🏢 **Veicolo Richiesto:** {info['Veicolo_Tipo']}")
         st.markdown(f"📍 **Partenza:** {info['Da']} - **Ore {info['Partenza'].strftime('%H:%M')}**")
         st.markdown(f"🏁 **Destinazione:** {info['A']}")
-        
         if altri_pax:
-            st.warning(f"👥 **Stato:** Car Pooling con ID: {', '.join(map(str, altri_pax))}")
+            st.warning(f"👥 **Stato:** Car Pooling con ID: {', '.join(map(str, altpax))}")
         else:
             st.info("🚘 **Stato:** Servizio Singolo")
