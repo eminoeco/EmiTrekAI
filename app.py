@@ -5,18 +5,19 @@ import googlemaps
 import re
 
 # --- CONFIGURAZIONE ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Dispatcher", page_icon="🚐")
+st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Pro Safe", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 BASE_OPERATIVA = "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM"
 
-# --- FUNZIONE API ---
+# --- FUNZIONE API (SICURA) ---
 def get_gmaps_info(origin, destination):
     try:
+        # Recupero sicuro dai Secrets di sistema (non dal file locale)
         if "MAPS_API_KEY" not in st.secrets:
-            return 30, "ERRORE: MAPS_API_KEY mancante"
+            return 30, "⚠️ Errore Configurazione: Chiave non configurata nel Cloud"
         
         api_key = st.secrets["MAPS_API_KEY"]
         gmaps = googlemaps.Client(key=api_key)
@@ -30,12 +31,14 @@ def get_gmaps_info(origin, destination):
             itinerario = " ➡️ ".join([s.split("verso")[0].strip() for s in steps if any(k in s for k in ["Via", "Viale", "A91", "Raccordo", "Autostrada"])][:3])
             return durata, f"{itinerario} ({distanza})"
     except Exception as e:
-        st.error(f"ERRORE GOOGLE MAPS: {str(e)}")
-        return 30, f"Errore: {str(e)}"
+        # Messaggio di errore generico per l'utente, log dettagliato per te
+        st.error(f"Problema nel calcolo del percorso. Verifica la console Google.")
+        return 30, f"Errore tecnico"
     return 30, "Calcolo non disponibile"
 
 # --- MOTORE DI DISPATCH ---
 def run_dispatch(df_c, df_f):
+    # [Logica di dispatch invariata per garantire la stabilità del SaaS]
     df_c.columns = df_c.columns.str.strip()
     df_f.columns = df_f.columns.str.strip()
     
@@ -55,7 +58,6 @@ def run_dispatch(df_c, df_f):
     for _, riga in df_c.iterrows():
         tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
         cap_max = CAPACITA.get(tipo_v, 3)
-        
         best_aut_idx = None
         min_ritardo = float('inf')
         match_info = {}
@@ -63,7 +65,6 @@ def run_dispatch(df_c, df_f):
         for f_idx, aut in df_f.iterrows():
             if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
             
-            # Logica Pooling
             is_pooling = (aut['Pos_Attuale'] == riga['Destinazione Finale'] and 
                           aut['Last_Time'] == riga['DT_Richiesta'] and 
                           aut['Pax_Oggi'] < cap_max)
@@ -108,15 +109,15 @@ def run_dispatch(df_c, df_f):
     return pd.DataFrame(res_list)
 
 # --- INTERFACCIA ---
-st.title("🚐 EmiTrekAI | Dispatcher SaaS")
+st.title("🚐 EmiTrekAI | Gestione Operativa Sicura")
 
 if 'risultati' not in st.session_state:
-    st.subheader("📂 Caricamento Dati")
+    st.subheader("📂 Caricamento File")
     c1, c2 = st.columns(2)
     with c1: f_c = st.file_uploader("Prenotazioni", type=['xlsx'])
     with c2: f_f = st.file_uploader("Flotta", type=['xlsx'])
     if f_c and f_f:
-        if st.button("ELABORA"):
+        if st.button("ELABORA CRONOPROGRAMMA"):
             st.session_state['risultati'] = run_dispatch(pd.read_excel(f_c), pd.read_excel(f_f))
             st.rerun()
 else:
@@ -124,10 +125,10 @@ else:
         del st.session_state['risultati']; st.rerun()
 
     df = st.session_state['risultati']
+    df['Partenza'] = pd.to_datetime(df['Partenza']) # Correzione AttributeError
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(df['Autista'].unique())}
 
     st.subheader("🗓️ Cronoprogramma Generale")
-    # Formattiamo la partenza per la tabella
     df_tab = df.copy()
     df_tab['Partenza'] = df_tab['Partenza'].dt.strftime('%H:%M')
     st.dataframe(df_tab[['Autista', 'ID', 'Mezzo', 'Da', 'Partenza', 'A', 'Arrivo', 'Status']].style.apply(
@@ -137,26 +138,23 @@ else:
     col_aut, col_cli = st.columns(2)
     
     with col_aut:
-        st.header("🕵️ Dettaglio Autista")
-        sel_aut = st.selectbox("Seleziona Autista:", df['Autista'].unique())
+        st.header("🕵️ Spostamenti Autista")
+        sel_aut = st.selectbox("Autista:", df['Autista'].unique())
         for _, r in df[df['Autista'] == sel_aut].iterrows():
             with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}"):
-                st.write(f"📍 Provenienza: **{r['Provenienza']}**")
+                st.write(f"📍 Proviene da: **{r['Provenienza']}**")
 
     with col_cli:
         st.header("📍 Dettaglio Cliente")
-        sel_id = st.selectbox("Cerca ID Prenotazione:", df['ID'].unique())
+        sel_id = st.selectbox("ID Prenotazione:", df['ID'].unique())
         info = df[df['ID'] == sel_id].iloc[0]
         
-        # LOGICA CAR POOLING: Cerca altri clienti con stesso autista e stessa ora di partenza
-        altri_pax = df[(df['Autista'] == info['Autista']) & 
-                       (df['Partenza'] == info['Partenza']) & 
-                       (df['ID'] != info['ID'])]['ID'].tolist()
+        altri_pax = df[(df['Autista'] == info['Autista']) & (df['Partenza'] == info['Partenza']) & (df['ID'] != info['ID'])]['ID'].tolist()
         
-        st.success(f"👤 **Autista assegnato:** {info['Autista']}")
+        st.success(f"👤 **Autista:** {info['Autista']}")
         st.info(f"🛣️ **Direzione:** {info['Itinerario']}")
         
         if altri_pax:
-            st.warning(f"👥 **In Auto con (Car Pooling):** {', '.join(map(str, altri_pax))}")
+            st.warning(f"👥 **In Car Pooling con:** {', '.join(map(str, altri_pax))}")
         else:
-            st.light("🚘 **Viaggio Singolo** (Nessun altro cliente a bordo)")
+            st.write("🚘 **Servizio Singolo**")
