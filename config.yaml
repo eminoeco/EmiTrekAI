@@ -1,0 +1,23 @@
+cookie:
+  expiry_days: 30
+  key: 'una_chiave_segreta_casuale_molto_lunga_1234567890'
+  name: 'emitrek_auth'
+
+credentials:
+  usernames:
+    nccroma:
+      email: nccroma@client.com
+      name: NCC Roma Cliente
+      password: $2b$12$i0S1GpjIRyNUTXJ/MxZ7/u9sW6hUXAv2bn6IVy32rcsqedEgD7rR. # Hash per 'clientepass'
+      role: user
+      client_id: CLIENTE_NCC_ROMA_001
+    admin: # Blocco admin temporaneo per una configurazione completa
+      email: admin@emitrek.com
+      name: Amministratore
+      password: $2b$12$Nq9nB5Dq9A6j0T0Yn5oOQeFp1wQ1hTfS2k4U5L7K8R9F0G1H2J3K4 # Hash per 'adminpass'
+      role: admin
+      client_id: ADMIN_001
+
+# QUESTA SEZIONE È NECESSARIA PER EVITARE IL PROBLEMA DI NoneType
+preauthorized:
+  emails:

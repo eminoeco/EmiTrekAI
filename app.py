@@ -1,208 +1,171 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, time, timedelta
-import numpy as np
-from io import BytesIO
+from datetime import datetime, timedelta
+import googlemaps
+import re
 
-# FIX PER STREAMLIT CLOUD: disabilita warning e chained assignment
+# --- CONFIGURAZIONE ---
+st.set_page_config(layout="wide", page_title="EmiTrekAI | Gestione Pro", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
-# --- CONFIGURAZIONE GENERALE ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI: VOM", page_icon="🗓️")
+DRIVER_COLORS = {'Andrea': '#4CAF50', 'Carlo': '#2196F3', 'Giulia': '#FFC107', 'Marco': '#E91E63', 'DEFAULT': '#607D8B'}
+CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
+BASE_OPERATIVA = "Via dell'Aeroporto di Fiumicino, 00054 Fiumicino RM"
 
-# Inizializza lo stato in modo sicuro
-if 'processed_data' not in st.session_state:
-    st.session_state['processed_data'] = False
-    st.session_state['assegnazioni_complete'] = None
-    st.session_state['flotta_risorse'] = None
-    st.session_state['authenticated'] = False
-    st.session_state['user_role'] = None
+# --- FUNZIONE API GOOGLE MAPS ---
+def get_gmaps_info(origin, destination):
+    try:
+        api_key = st.secrets["GOOGLE_MAPS_API_KEY"]
+        gmaps = googlemaps.Client(key=api_key)
+        res = gmaps.directions(origin, destination, mode="driving", language="it", departure_time=datetime.now())
+        if res:
+            leg = res[0]['legs'][0]
+            durata = int(leg['duration_in_traffic']['value'] / 60)
+            steps = [re.sub('<[^<]+?>', '', s['html_instructions']).split("verso")[0].strip() for s in leg['steps']]
+            strade = [s for s in steps if any(k in s for k in ["Raccordo", "Uscita", "Via", "Viale", "A91"])]
+            return durata, " ➡️ ".join(list(dict.fromkeys(strade))[:3])
+    except:
+        return 20, "Percorso Standard" # Valore di emergenza se API fallisce
 
-# --- MAPPATURA COLORI E EMOJI ---
-DRIVER_COLORS = {
-    'Andrea': '#4CAF50', 'Carlo': '#2199F3', 'Giulia': '#FFC107',
-    'Marco': '#E91E63', 'Luca': '#00BCD4', 'Sara': '#FF5722',
-    'Elena': '#673AB7', 'DEFAULT': '#B0BEC5'
-}
-
-VEHICLE_EMOJIS = {
-    'Berlina': '🚗', 'Minivan': '🚐', 'Suv': '🚙', 'Default': '❓' 
-}
-
-# --- STILI CSS ---
-st.markdown(
-    """
-    <style>
-    .stApp { background-color: #F0F8FF; }
-    .big-font { font-size:20px !important; font-weight: bold; }
-    .card-title-font { font-size: 16px !important; font-weight: bold; margin-bottom: 5px; }
-    .driver-card { padding: 10px; border-radius: 8px; box-shadow: 1px 1px 5px rgba(0,0,0,0.1); margin-bottom: 10px; color: white; }
-    .driver-card p { font-size: 13px; margin: 0; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# --- FUNZIONI DI SERVIZIO ---
-def check_credentials(username, password):
-    if 'users' not in st.secrets:
-        st.error("Errore: Configura i 'Secrets' su Streamlit Cloud (file secrets.toml).")
-        return False, None
-    if username in st.secrets.users:
-        user_data = st.secrets.users[username]
-        if user_data.password == password:
-            return True, user_data.role
-    return False, None
-
-def to_time(val):
-    if isinstance(val, datetime): return val.time()
-    if isinstance(val, time): return val
-    if isinstance(val, str): 
-        for fmt in ('%H:%M', '%H.%M'):
-            try: return datetime.strptime(val, fmt).time()
-            except ValueError: continue
-    return time(0, 0)
-
-def time_to_minutes(t):
-    return t.hour * 60 + t.minute
-
-# --- LOGICA DI SCHEDULAZIONE (BILANCIATA) ---
-def run_scheduling(df_clienti, df_flotta):
-    assegnazioni_df = df_clienti.copy()
-    assegnazioni_df['ID Veicolo Assegnato'] = np.nan
-    assegnazioni_df['Autista Assegnato'] = np.nan
-    assegnazioni_df['Stato Assegnazione'] = 'NON ASSEGNATO'
-    assegnazioni_df['Ora Effettiva Prelievo'] = np.nan
-    assegnazioni_df['Ritardo Prelievo (min)'] = 0 
+# --- MOTORE DI DISPATCH ---
+def run_dispatch(df_c, df_f):
+    df_c.columns = df_c.columns.str.strip()
+    df_f.columns = df_f.columns.str.strip()
     
-    df_risorse = df_flotta.copy()
-    df_risorse['Prossima Disponibilità'] = df_risorse['Disponibile Da (hh:mm)'].apply(to_time)
-    df_risorse['Disponibile Fino (hh:mm)'] = df_risorse['Disponibile Fino (hh:mm)'].apply(to_time)
-    df_risorse['Tipo Veicolo'] = df_risorse['Tipo Veicolo'].astype(str).str.capitalize()
-    df_risorse['Servizi Assegnati'] = 0 
+    def parse_t(t):
+        if isinstance(t, str): return datetime.strptime(t.strip().replace('.', ':'), '%H:%M')
+        return datetime.combine(datetime.today(), t)
+
+    df_c['DT_Richiesta'] = df_c['Ora Arrivo'].apply(parse_t)
+    df_f['DT_Disp'] = df_f['Disponibile Da (hh:mm)'].apply(parse_t)
+    df_f['Posizione_Attuale'] = BASE_OPERATIVA
+    df_f['Servizi'] = 0
     
-    assegnazioni_df['Ora Prelievo Richiesta'] = assegnazioni_df['Ora Arrivo'].apply(to_time)
-    assegnazioni_df = assegnazioni_df.sort_values(by='Ora Prelievo Richiesta').reset_index(drop=True)
-    
-    for index, cliente in assegnazioni_df.iterrows():
-        ora_richiesta = cliente['Ora Prelievo Richiesta']
-        veicolo_richiesto = str(cliente['Tipo Veicolo Richiesto']).capitalize()
-        
-        try:
-            durata = int(cliente['Tempo Servizio Totale (Minuti)'])
-        except: continue
-        
-        # Filtra autisti compatibili
-        candidati = df_risorse[
-            (df_risorse['Tipo Veicolo'] == veicolo_richiesto) & 
-            (df_risorse['Disponibile Fino (hh:mm)'].apply(time_to_minutes) >= time_to_minutes(ora_richiesta))
-        ].copy()
-        
-        if candidati.empty: continue
-        
-        # Calcola ritardo e bilanciamento
-        t_richiesto = time_to_minutes(ora_richiesta)
-        candidati['Ritardo'] = (candidati['Prossima Disponibilità'].apply(time_to_minutes) - t_richiesto).clip(lower=0)
-        
-        # Scelta: Priorità a meno ritardo, poi a chi ha lavorato meno (bilanciamento)
-        scelto = candidati.sort_values(by=['Ritardo', 'Servizi Assegnati']).iloc[0]
-        
-        ritardo_min = int(scelto['Ritardo'])
-        partenza_effettiva = (datetime.combine(datetime.today(), ora_richiesta) + timedelta(minutes=ritardo_min)).time()
-        fine_servizio = (datetime.combine(datetime.today(), partenza_effettiva) + timedelta(minutes=durata)).time()
-        
-        if fine_servizio <= scelto['Disponibile Fino (hh:mm)']:
-            assegnazioni_df.loc[index, 'Autista Assegnato'] = scelto['Autista']
-            assegnazioni_df.loc[index, 'Stato Assegnazione'] = 'ASSEGNATO'
-            assegnazioni_df.loc[index, 'Ora Effettiva Prelievo'] = partenza_effettiva
-            assegnazioni_df.loc[index, 'Ritardo Prelievo (min)'] = ritardo_min
+    res_list = []
+    assegnati = set()
+    df_c = df_c.sort_values(by='DT_Richiesta')
+
+    for idx, riga in df_c.iterrows():
+        if idx in assegnati: continue
+        tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
+        cap_max = CAPACITA.get(tipo_v, 3)
+
+        # RAGGRUPPAMENTO (Grouping)
+        gruppo = df_c[(~df_c.index.isin(assegnati)) & (df_c['Indirizzo Prelievo'] == riga['Indirizzo Prelievo']) & 
+                      (df_c['Destinazione Finale'] == riga['Destinazione Finale']) & (df_c['DT_Richiesta'] == riga['DT_Richiesta'])].head(cap_max)
+
+        # SATURAZIONE: Priorità a chi lavora già
+        candidati = pd.concat([df_f[df_f['Servizi'] > 0], df_f[df_f['Servizi'] == 0]])
+        best_aut_idx = None; min_ritardo = float('inf')
+
+        for f_idx, aut in candidati.iterrows():
+            if str(aut['Tipo Veicolo']).strip().capitalize() != tipo_v: continue
             
-            df_risorse.loc[df_risorse['ID Veicolo'] == scelto['ID Veicolo'], 'Prossima Disponibilità'] = fine_servizio
-            df_risorse.loc[df_risorse['ID Veicolo'] == scelto['ID Veicolo'], 'Servizi Assegnati'] += 1
+            durata_v, _ = get_gmaps_info(aut['Posizione_Attuale'], riga['Indirizzo Prelievo'])
+            ora_pronto = aut['DT_Disp'] + timedelta(minutes=(15 if aut['Servizi'] > 0 else 0) + durata_v)
+            ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
+            
+            if ritardo < min_ritardo:
+                min_ritardo = ritardo
+                best_aut_idx = f_idx
+                info_temp = {'pronto': ora_pronto, 'vuoto': durata_v, 'da': aut['Posizione_Attuale']}
 
-    st.session_state['assegnazioni_complete'] = assegnazioni_df
-    st.session_state['flotta_risorse'] = df_risorse
-    st.session_state['processed_data'] = True
+        if best_aut_idx is not None:
+            durata_p, itinerario_p = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
+            partenza_eff = max(riga['DT_Richiesta'], info_temp['pronto'])
+            arrivo_eff = partenza_eff + timedelta(minutes=15 + durata_p)
+            anticipo = (riga['DT_Richiesta'] - info_temp['pronto']).total_seconds() / 60
 
-# --- GENERATORE VOS (Virtual Operations Summary) ---
-def generate_vos_report(driver_name, driver_df, resources_df):
-    info = resources_df[resources_df['Autista'] == driver_name].iloc[0]
-    report = f"### 📊 VOS: Riepilogo Analitico Operatore {driver_name}\n\n"
-    
-    if driver_df.empty:
-        return report + "Nessun servizio assegnato per questo turno."
+            for g_idx in gruppo.index:
+                res_list.append({
+                    'Autista': df_f.at[best_aut_idx, 'Autista'], 'ID': df_c.at[g_idx, 'ID Prenotazione'],
+                    'Mezzo': df_f.at[best_aut_idx, 'ID Veicolo'], 'Da': riga['Indirizzo Prelievo'],
+                    'Partenza': partenza_eff.strftime('%H:%M'), 'A': riga['Destinazione Finale'],
+                    'Arrivo': arrivo_eff.strftime('%H:%M'), 'Status': "PUNTUALE" if min_ritardo <= 5 else f"RITARDO {int(min_ritardo)}m",
+                    'Vuoto_Min': info_temp['vuoto'], 'Provenienza': info_temp['da'], 'Arrivo_Effettivo': info_temp['pronto'].strftime('%H:%M'),
+                    'Anticipo': int(anticipo) if anticipo > 0 else 0, 'Itinerario': itinerario_p
+                })
+                assegnati.add(g_idx)
+            
+            df_f.at[best_aut_idx, 'DT_Disp'] = arrivo_eff
+            df_f.at[best_aut_idx, 'Posizione_Attuale'] = riga['Destinazione Finale']
+            df_f.at[best_aut_idx, 'Servizi'] += 1
 
-    report += f"**Analisi Operativa:** {driver_name} gestisce **{len(driver_df)} servizi** con veicolo **{info['Tipo Veicolo']}**.\n\n"
-    report += "**Dettaglio Passaggi:**\n"
-    
-    for i, row in driver_df.iterrows():
-        ritardo = f" (+{row['Ritardo Prelievo (min)']}m ritardo)" if row['Ritardo Prelievo (min)'] > 0 else ""
-        report += f"- {row['Ora Effettiva Prelievo'].strftime('%H:%M')}{ritardo}: Prelievo Cliente **{row['ID Prenotazione']}** da {row['Indirizzo Prelievo']} a {row['Destinazione Finale']}.\n"
-    
-    report += f"\n**Status Finale:** Disponibilità prevista dalle ore **{info['Prossima Disponibilità'].strftime('%H:%M')}**."
-    return report
+    return pd.DataFrame(res_list), df_f
 
-# --- INTERFACCIA UTENTE ---
-if not st.session_state['authenticated']:
-    st.title("🔐 Accesso EmiTrekAI")
-    user = st.text_input("Username")
-    pw = st.text_input("Password", type="password")
-    if st.button("Login"):
-        auth, role = check_credentials(user, pw)
-        if auth:
-            st.session_state['authenticated'] = True
-            st.session_state['user_role'] = role
-            st.rerun()
-        else:
-            st.error("Credenziali non valide")
+# --- INTERFACCIA ---
+st.title("🚐 EmiTrekAI | Gestione Operativa")
+
+# 1. MOSTRA FLOTTA SOLO SE NON ABBIAMO ANCORA I RISULTATI
+if 'res_c' not in st.session_state:
+    st.subheader("🧑‍✈️ Stato Flotta Attuale")
+    st.info("Carica i file Excel qui sotto per visualizzare il piano corse ottimizzato.")
 else:
-    if st.sidebar.button("Logout"):
-        st.session_state['authenticated'] = False
+    # Se i risultati ci sono, mostriamo un piccolo riepilogo invece delle card giganti
+    st.success("✅ Programma corse generato con successo. Card flotta rimosse per pulizia grafica.")
+
+st.divider()
+
+c1, c2 = st.columns(2)
+with c1: f_c = st.file_uploader("📂 Carica Prenotazioni (Excel)", type=['xlsx'])
+with c2: f_f = st.file_uploader("🚐 Carica Flotta (Excel)", type=['xlsx'])
+
+if f_c and f_f:
+    if st.button("ELABORA EMOZIONANTE PIANO OPERATIVO", type="primary", use_container_width=True):
+        dc = pd.read_excel(f_c); df = pd.read_excel(f_f)
+        rc, rf = run_dispatch(dc, df)
+        st.session_state['res_c'], st.session_state['res_f'] = rc, rf
         st.rerun()
 
-    if not st.session_state['processed_data']:
-        st.title("EmiTrekAI: Virtual Operations Manager")
-        if st.session_state['user_role'] == 'admin':
-            c1, c2 = st.columns(2)
-            with c1: f_cli = st.file_uploader("Prenotazioni", type=['xlsx', 'csv'])
-            with c2: f_flo = st.file_uploader("Flotta", type=['xlsx', 'csv'])
-            
-            if f_cli and f_flo:
-                df_c = pd.read_excel(f_cli) if f_cli.name.endswith('xlsx') else pd.read_csv(f_cli)
-                df_f = pd.read_excel(f_flo) if f_flo.name.endswith('xlsx') else pd.read_csv(f_flo)
-                if st.button("Elabora Turni"):
-                    run_scheduling(df_c, df_f)
-                    st.rerun()
-        else:
-            st.info("Benvenuto. In attesa del caricamento dati dall'amministratore.")
-    else:
-        # DASHBOARD
-        st.title("✨ Dashboard Operativa")
-        df_res = st.session_state['flotta_risorse']
-        df_ass = st.session_state['assegnazioni_complete']
-        
-        # Schede Autisti
-        cols = st.columns(len(df_res))
-        for i, row in df_res.iterrows():
-            with cols[i]:
-                colore = DRIVER_COLORS.get(row['Autista'], '#B0BEC5')
-                st.markdown(f"""<div class='driver-card' style='background:{colore}'>
-                <p class='card-title-font'>{row['Autista']} {VEHICLE_EMOJIS.get(row['Tipo Veicolo'], '❓')}</p>
-                <p>Servizi: {row['Servizi Assegnati']}</p>
-                <p>Libero: {row['Prossima Disponibilità'].strftime('%H:%M')}</p>
-                </div>""", unsafe_allow_html=True)
+if 'res_c' in st.session_state:
+    rc = st.session_state['res_c']
+    rf = st.session_state['res_f']
 
-        # Tabella Globale
-        st.markdown("---")
-        st.subheader("Sequenza Servizi")
-        st.dataframe(df_ass[df_ass['Stato Assegnazione'] == 'ASSEGNATO'], use_container_width=True)
+    # --- TABELLA COLORATA ---
+    st.subheader("🗓️ Cronoprogramma Ottimizzato")
+    def color_table(row):
+        color = DRIVER_COLORS.get(row['Autista'], '#607D8B')
+        return [f'background-color: {color}; color: white; font-weight: bold;' for i in row]
+    
+    st.dataframe(rc[['Autista', 'ID', 'Mezzo', 'Da', 'Partenza', 'A', 'Arrivo', 'Status']].style.apply(color_table, axis=1), use_container_width=True)
 
-        # Report Individuale
-        st.markdown("---")
-        autista_sel = st.selectbox("Seleziona Autista per Report VOS", df_res['Autista'])
-        driver_data = df_ass[df_ass['Autista Assegnato'] == autista_sel]
-        st.info(generate_vos_report(autista_sel, driver_data, df_res))
+    st.divider()
+
+    # --- ANALISI AUTISTA E SPOSTAMENTI TECNICI ---
+    col_aut, col_cli = st.columns(2)
+
+    with col_aut:
+        st.header("🕵️ Diario di Bordo Autisti")
+        sel_d = st.selectbox("Seleziona Autista per dettagli spostamenti:", rf['Autista'].unique())
+        d_jobs = rc[rc['Autista'] == sel_d].sort_values(by='Partenza')
         
-        if st.button("Reset Dati"):
-            st.session_state['processed_data'] = False
-            st.rerun()
+        for _, job in d_jobs.iterrows():
+            with st.expander(f"🕒 Servizio {job['ID']} - Ore {job['Partenza']}", expanded=True):
+                st.markdown(f"""
+                **SPOSTAMENTO TECNICO:**
+                - 🔄 Muove da: **{job['Provenienza']}**
+                - ⏱️ Tempo a vuoto: **{job['Vuoto_Min']} min**
+                - 🏁 Arrivo al punto di carico: **{job['Arrivo_Effettivo']}**
+                - ⏱️ **Anticipo sul cliente:** {job['Anticipo']} min
+                """)
+        
+        # Tasto Stampa Semplice
+        st.subheader("🖨️ Foglio di Servizio Stampabile")
+        txt_print = f"FOGLIO DI SERVIZIO: {sel_d}\n" + "-"*30 + "\n"
+        for _, job in d_jobs.iterrows():
+            txt_print += f"[{job['Partenza']}] {job['Da']} ➡️ {job['A']}\n(Arrivo ore {job['Arrivo']})\n" + "-"*30 + "\n"
+        st.text_area("Copia per stampa:", txt_print, height=150)
+
+    with col_cli:
+        st.header("📍 Analisi Riassuntiva Clienti")
+        sel_c = st.selectbox("Seleziona ID Cliente:", rc['ID'].unique())
+        c_info = rc[rc['ID'] == sel_c].iloc[0]
+        st.markdown(f"""
+        <div style="background-color: #ffffff; padding: 20px; border-radius: 10px; border-left: 10px solid {DRIVER_COLORS.get(c_info['Autista'])}; border-top: 1px solid #ddd;">
+            <h3>Dettaglio Viaggio {sel_c}</h3>
+            <p><b>TRAGITTO:</b> Da {c_info['Da']} a {c_info['A']}</p>
+            <p><b>ITINERARIO SUGGERITO AI:</b><br><i>{c_info['Itinerario']}</i></p>
+            <hr>
+            <p><b>NOTA LOGISTICA:</b> Autista {c_info['Autista']} arriverà al prelievo con un margine di {c_info['Anticipo']} min.</p>
+        </div>
+        """, unsafe_allow_html=True)
