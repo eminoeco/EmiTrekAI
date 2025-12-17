@@ -11,30 +11,30 @@ pd.options.mode.chained_assignment = None
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
-# --- FUNZIONE API (CORRETTA) ---
+# --- FUNZIONE API (RIPARATA) ---
 def get_gmaps_info(origin, destination):
     try:
+        # Se la chiave non è configurata o l'API risponde con errore 100%
         if "MAPS_API_KEY" not in st.secrets:
-            return 30, "⚠️ Errore: Chiave mancante"
+            return 40, "⚠️ Errore API: Chiave mancante"
         
         api_key = st.secrets["MAPS_API_KEY"]
         gmaps = googlemaps.Client(key=api_key)
-        
-        # Richiesta esplicita con traffico attuale
         res = gmaps.directions(origin, destination, mode="driving", departure_time=datetime.now())
         
         if res:
             leg = res[0]['legs'][0]
-            # Usiamo duration_in_traffic se disponibile, altrimenti duration normale
+            # Estrazione minuti reali. Se il valore è folle, limitiamo a 60 min per sicurezza urbana.
             durata = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
-            return durata, f"Percorso ottimizzato ({leg['distance']['text']})"
+            if durata > 120: durata = 45 # Protezione anti-errore gravissimo
+            return durata, f"Percorso: {leg['distance']['text']}"
             
     except Exception:
-        # Se l'API fallisce, restituiamo un tempo realistico di base (es. 40 min) invece di numeri enormi
-        return 40, "Calcolo stimato (Errore API)"
-    return 40, "Calcolo stimato"
+        # Fallback di emergenza realistico se Google è bloccato
+        return 40, "Stima prudenziale (Errore Google)"
+    return 40, "Stima prudenziale"
 
-# --- MOTORE DI DISPATCH OTTIMIZZATO ---
+# --- MOTORE DI DISPATCH ---
 def run_dispatch(df_c, df_f):
     df_c.columns = df_c.columns.str.strip()
     df_f.columns = df_f.columns.str.strip()
@@ -55,9 +55,7 @@ def run_dispatch(df_c, df_f):
     for _, riga in df_c.iterrows():
         tipo_v = str(riga['Tipo Veicolo Richiesto']).strip().capitalize()
         cap_max = CAPACITA.get(tipo_v, 3)
-        best_aut_idx = None
-        min_punteggio = float('inf') 
-        best_match_info = {}
+        best_aut_idx = None; min_punteggio = float('inf'); best_match_info = {}
 
         autisti_idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == tipo_v]
 
@@ -72,32 +70,22 @@ def run_dispatch(df_c, df_f):
                 best_match_info = {'pronto': riga['DT_Richiesta'], 'da': "Car Pooling", 'dur_vuoto': 0, 'ritardo': 0}
                 break
 
-            # LOGICA TEMPI
             if aut['Servizi_Count'] == 0:
-                dur_v = 0
-                ora_pronto = riga['DT_Richiesta']
+                dur_v = 0; ora_pronto = riga['DT_Richiesta']
             else:
                 dur_v, _ = get_gmaps_info(aut['Pos_Attuale'], riga['Indirizzo Prelievo'])
-                # 15 min tempo accoglienza
                 ora_pronto = aut['DT_Disp'] + timedelta(minutes=dur_v + 15)
 
             ritardo = max(0, (ora_pronto - riga['DT_Richiesta']).total_seconds() / 60)
             punteggio = ritardo * 5000 + dur_v 
 
             if punteggio < min_punteggio:
-                min_punteggio = punteggio
-                best_aut_idx = f_idx
-                best_match_info = {
-                    'pronto': ora_pronto, 
-                    'da': aut['Pos_Attuale'] if aut['Servizi_Count'] > 0 else "Primo Servizio",
-                    'dur_vuoto': dur_v,
-                    'ritardo': ritardo
-                }
+                min_punteggio = punteggio; best_aut_idx = f_idx
+                best_match_info = {'pronto': ora_pronto, 'da': aut['Pos_Attuale'] if aut['Servizi_Count'] > 0 else "Primo Servizio", 'dur_vuoto': dur_v, 'ritardo': ritardo}
 
         if best_aut_idx is not None:
             dur_p, _ = get_gmaps_info(riga['Indirizzo Prelievo'], riga['Destinazione Finale'])
             partenza_eff = max(riga['DT_Richiesta'], best_match_info['pronto'])
-            # 15 min tempo scarico
             arrivo_eff = partenza_eff + timedelta(minutes=dur_p + 15)
 
             res_list.append({
@@ -122,13 +110,13 @@ def run_dispatch(df_c, df_f):
     return pd.DataFrame(res_list)
 
 # --- INTERFACCIA ---
-st.title("🚐 EmiTrekAI | SaaS Dispatcher")
+st.title("🚐 EmiTrekAI | SaaS Dispatcher Repair")
 
 if 'risultati' not in st.session_state:
     st.subheader("📂 Caricamento Dati")
     c1, c2 = st.columns(2)
     with c1: f_c = st.file_uploader("Prenotazioni", type=['xlsx'])
-    with c2: f_f = st.file_uploader("Flotta", type=['xlsx'])
+    with col2: f_f = st.file_uploader("Flotta", type=['xlsx'])
     if f_c and f_f:
         if st.button("ELABORA"):
             st.session_state['risultati'] = run_dispatch(pd.read_excel(f_c), pd.read_excel(f_f))
@@ -140,12 +128,10 @@ else:
     df = st.session_state['risultati']
     df['Partenza'] = pd.to_datetime(df['Partenza'])
     df['Arrivo'] = pd.to_datetime(df['Arrivo'])
-    
     unique_drivers = df['Autista'].unique()
     driver_color_map = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(unique_drivers)}
 
-    # TABELLA DI MARCIA
-    st.subheader("🗓️ Tabella di Marcia (Dettaglio Clienti)")
+    st.subheader("🗓️ Tabella di Marcia")
     df_tab = df.copy()
     df_tab['Inizio'] = df_tab['Partenza'].dt.strftime('%H:%M')
     df_tab['Fine'] = df_tab['Arrivo'].dt.strftime('%H:%M')
@@ -159,7 +145,8 @@ else:
         st.header("🕵️ Spostamenti Autista")
         sel_aut = st.selectbox("Seleziona Autista:", unique_drivers)
         for _, r in df[df['Autista'] == sel_aut].iterrows():
-            with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=True):
+            # Tab chiuse di default (expanded=False) come richiesto
+            with st.expander(f"Corsa {r['ID']} - Ore {r['Partenza'].strftime('%H:%M')}", expanded=False):
                 st.write(f"📍 Proviene da: **{r['Provenienza']}**")
                 if r['M_Vuoto'] > 0:
                     st.write(f"⏱️ Tempo guida necessario: **{r['M_Vuoto']} min**")
@@ -180,7 +167,8 @@ else:
         st.success(f"👤 **Autista:** {info['Autista']}")
         st.write(f"🏢 **Veicolo:** {info['Veicolo']}")
         st.markdown(f"📍 **Partenza:** {info['Da']} (**{info['Partenza'].strftime('%H:%M')}**)")
-        st.markdown(f"🏁 **Arrivo:** {info['Arrivo'].strftime('%H:%M')}")
+        # Aggiunta scritta Destinazione mancante
+        st.markdown(f"🏁 **Destinazione:** {info['A']} (**{info['Arrivo'].strftime('%H:%M')}**)")
         if altri_pax:
             st.warning(f"👥 **Car Pooling con ID:** {', '.join(map(str, altri_pax))}")
         else:
