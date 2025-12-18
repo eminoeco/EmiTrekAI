@@ -7,7 +7,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel
 
 # --- 1. CONFIGURAZIONE ESTETICA ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI | High Precision SaaS", page_icon="🚐")
+st.set_page_config(layout="wide", page_title="EmiTrekAI | High Precision", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
 st.markdown("""
@@ -38,21 +38,29 @@ def check_password():
         return False
     return True
 
-# --- 3. MOTORE AD ALTA PRECISIONE ---
+# --- 3. MOTORE AD ALTA PRECISIONE (API + VERTEX AI) ---
 def ai_validate_time(origin, dest, g_min):
+    """L'AI non improvvisa: valida il dato Maps con logica NCC"""
     try:
         info = dict(st.secrets["gcp_service_account"])
         creds = service_account.Credentials.from_service_account_info(info)
         vertexai.init(project=info["project_id"], location="us-central1", credentials=creds)
         model = GenerativeModel("gemini-1.5-flash")
-        prompt = (f"Analisi NCC Roma: da {origin} a {dest}. Maps dice {g_min} min. "
-                  f"Sii preciso e realista per il traffico di Roma. Rispondi SOLO con il numero intero.")
+        
+        # Prompt che vieta categoricamente valori fissi o fallback
+        prompt = (f"Analizza il tragitto da {origin} a {dest} a Roma. Maps stima {g_min} min. "
+                  f"Usa la tua conoscenza del traffico reale e fornisci la stima più accurata. "
+                  f"NON fornire mai valori arrotondati o fissi se non corrispondono al vero. "
+                  f"Rispondi SOLO con il numero intero dei minuti.")
+        
         response = model.generate_content(prompt)
         res_num = ''.join(filter(str.isdigit, response.text))
         return int(res_num) if res_num else g_min, True
-    except: return g_min, False
+    except:
+        return g_min, False
 
 def get_real_metrics(origin, destination):
+    """Interroga Google Maps e passa il dato a Vertex AI"""
     try:
         gmaps = googlemaps.Client(key=st.secrets["MAPS_API_KEY"])
         res = gmaps.directions(origin, destination, mode="driving", departure_time=datetime.now())
@@ -61,7 +69,9 @@ def get_real_metrics(origin, destination):
             dur_google = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
             final_t, ai_active = ai_validate_time(origin, destination, dur_google)
             return final_t, leg['distance']['text'], ai_active
-    except: return 45, "N/D", False
+    except:
+        # Se l'API fallisce, restituiamo 0 per segnalare l'errore, non più 45!
+        return 0, "Errore Dati", False
 
 # --- 4. LOGICA SMART DISPATCH (POOLING E 10+10 MIN) ---
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
@@ -71,7 +81,6 @@ def run_dispatch(df_c, df_f):
     bar = st.progress(0); status = st.empty()
     df_c.columns = df_c.columns.str.strip(); df_f.columns = df_f.columns.str.strip()
     
-    # Rilevamento automatico colonne per evitare KeyError
     col_id = next((c for c in df_c.columns if 'ID' in c), df_c.columns[0])
     col_ora = next((c for c in df_c.columns if 'Ora' in c), 'Ora Arrivo')
     col_prel = next((c for c in df_c.columns if 'Prelievo' in c), 'Indirizzo Prelievo')
@@ -87,14 +96,14 @@ def run_dispatch(df_c, df_f):
     df_c = df_c.sort_values(by=['DT_R', col_dest])
 
     for i, (_, r) in enumerate(df_c.iterrows()):
-        status.text(f"📡 Validazione reale Corsa {r[col_id]}...")
+        status.text(f"📡 Calcolo traffico reale Corsa {r[col_id]}...")
         bar.progress((i + 1) / len(df_c))
         
         req = r[col_tipo].strip().capitalize()
         cap_max = CAPACITA.get(req, 3)
         assigned = False
         
-        # 1. SMART POOLING
+        # Smart Pooling
         potenziali = df_f[(df_f['Tipo Veicolo'].str.capitalize() == req) & (df_f['Last_D'] == r[col_dest]) & (df_f['P_Oggi'] < cap_max)]
         for idx_p, aut_p in potenziali.iterrows():
             last = next(c for c in reversed(res_list) if c['Autista'] == aut_p['Autista'])
@@ -106,13 +115,12 @@ def run_dispatch(df_c, df_f):
                 })
                 df_f.at[idx_p, 'P_Oggi'] += 1; assigned = True; break
 
-        # 2. ASSEGNAZIONE SINGOLA (10+10 MIN)
         if not assigned:
             idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == req]
             best_m = None; min_rit = float('inf')
             for idx, aut in idonei.iterrows():
                 dv, _, _ = get_real_metrics(aut['Pos'], r[col_prel])
-                op = aut['DT_D'] + timedelta(minutes=dv + 10) # Accoglienza 10m
+                op = aut['DT_D'] + timedelta(minutes=dv + 10) # 10m accoglienza
                 rit = max(0, (op - r['DT_R']).total_seconds() / 60)
                 if rit <= 2: best_m = (idx, op, dv, rit); break
                 if rit < min_rit: min_rit = rit; best_m = (idx, op, dv, rit)
@@ -120,7 +128,7 @@ def run_dispatch(df_c, df_f):
             if best_m:
                 idx, op, dv, rit = best_m
                 dp, dist, ai_p = get_real_metrics(r[col_prel], r[col_dest])
-                partenza = max(r['DT_R'], op); arrivo = partenza + timedelta(minutes=dp + 10) # Scarico 10m
+                partenza = max(r['DT_R'], op); arrivo = partenza + timedelta(minutes=dp + 10) # 10m scarico
                 res_list.append({
                     'Autista': df_f.at[idx, 'Autista'], 'ID': r[col_id], 'Mezzo': df_f.at[idx, 'ID Veicolo'], 'Veicolo': req,
                     'Da': r[col_prel], 'Partenza': partenza, 'A': r[col_dest], 'Arrivo': arrivo,
