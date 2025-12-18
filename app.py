@@ -9,6 +9,7 @@ pd.options.mode.chained_assignment = None
 
 st.markdown("""
     <style>
+    /* Pulsante Rosso Centrato e Professionale */
     .stButton > button {
         background-color: #FF4B4B; color: white; border-radius: 20px;
         height: 3.8em; width: 100%; font-size: 20px; font-weight: bold;
@@ -21,7 +22,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- LOGIN (SECRETS TOML + NO CRONOLOGIA) ---
+# --- LOGIN (CORRETTO + CENTRATO) ---
 def check_password():
     if "password_correct" not in st.session_state:
         st.markdown('<h1 class="main-title">🔒 Accesso Area Riservata</h1>', unsafe_allow_html=True)
@@ -29,19 +30,21 @@ def check_password():
         c1, c2 = st.columns(2)
         with c1: u = st.text_input("Nome Utente", key="u", autocomplete="off")
         with c2: p = st.text_input("Password", type="password", key="p", autocomplete="off")
-        _, cb, _ = st.columns([1, 1.5, 1])
+        # Centratura perfetta del tasto login
+        _, cb, _ = st.columns([1, 0.6, 1])
         with cb:
             if st.button("✨ ENTRA NEL SISTEMA"):
                 try:
+                    # Correzione accesso Secrets
                     if u in st.secrets["users"] and p == st.secrets["users"][u]["password"]:
                         st.session_state["password_correct"] = True
                         st.rerun()
                     else: st.error("🚫 Credenziali errate.")
-                except: st.error("❌ Errore Secrets: Tabella [users] mancante.")
+                except: st.error("❌ Errore critico nei Secrets di Streamlit.")
         return False
     return True
 
-# --- LOGICA OPERATIVA ---
+# --- LOGICA OPERATIVA (MAPS API + AI) ---
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
@@ -53,7 +56,7 @@ def get_gmaps_info(origin, destination):
         if res:
             leg = res[0]['legs'][0]
             dur = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
-            if dur > 120: dur = 45 # Protezione anti-errore
+            if dur > 120: dur = 45 # Protezione anti-follia
             return dur, f"{leg['distance']['text']}"
     except: return 40, "Stima"
     return 40, "Stima"
@@ -82,7 +85,7 @@ def run_dispatch(df_c, df_f):
                 dv, _ = get_gmaps_info(aut['Pos'], r['Indirizzo Prelievo'])
                 op = aut['DT_D'] + timedelta(minutes=dv + 15)
             rit = max(0, (op - r['DT_R']).total_seconds() / 60)
-            bonus = 5000 if aut['S_Count'] > 0 else 0 # Saturazione turni
+            bonus = 5000 if aut['S_Count'] > 0 else 0 # Ragionamento AI saturazione
             punteggio = (rit * 5000) + dv - bonus
             if punteggio < min_p:
                 min_p = punteggio; best_idx = idx; match = {'p': op, 'da': aut['Pos'] if aut['S_Count'] > 0 else "Primo Servizio", 'v': dv, 'rit': rit}
@@ -102,13 +105,13 @@ def run_dispatch(df_c, df_f):
 if check_password():
     st.sidebar.button("🔓 LOGOUT", on_click=lambda: st.session_state.pop("password_correct"))
     st.markdown('<h1 class="main-title">🚐 EmiTrekAI Dispatcher</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-title">Piano operativo ottimizzato per flotta NCC</p>', unsafe_allow_html=True)
+    st.markdown('<p class="sub-title">Gestione intelligente flotta NCC</p>', unsafe_allow_html=True)
 
     if 'risultati' not in st.session_state:
-        st.write("### 📂 Caricamento Dati")
+        st.write("### 📂 Caricamento Dati Operativi")
         c1, c2 = st.columns(2)
-        with c1: f_c = st.file_uploader("📋 Lista Prenotazioni (.xlsx)", type=['xlsx'])
-        with c2: f_f = st.file_uploader("🚘 Flotta Disponibile (.xlsx)", type=['xlsx'])
+        with c1: f_c = st.file_uploader("Lista Prenotazioni (.xlsx)", type=['xlsx'])
+        with c2: f_f = st.file_uploader("Stato Flotta (.xlsx)", type=['xlsx'])
         if f_c and f_f:
             _, cb, _ = st.columns([1, 1.5, 1])
             with cb:
@@ -121,7 +124,7 @@ if check_password():
         df, flotta = st.session_state['risultati'], st.session_state['flotta_finale']
         df['Partenza'] = pd.to_datetime(df['Partenza']); df['Arrivo'] = pd.to_datetime(df['Arrivo'])
         colors = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(flotta['Autista'].unique())}
-        st.write("### 📊 Situazione Mezzi")
+        st.write("### 📊 Riepilogo Flotta")
         cols = st.columns(len(flotta))
         for i, (_, aut) in enumerate(flotta.iterrows()):
             n, s, t = aut['Autista'], aut['S_Count'], aut['Tipo Veicolo']
