@@ -7,8 +7,8 @@ import vertexai
 from vertexai.generative_models import GenerativeModel
 import time
 
-# --- 1. CONFIGURAZIONE ESTETICA (Ripristino Totale) ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI | High Precision SaaS", page_icon="🚐")
+# --- 1. CONFIGURAZIONE ESTETICA ---
+st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Smart Dispatch", page_icon="🚐")
 pd.options.mode.chained_assignment = None
 
 st.markdown("""
@@ -42,8 +42,9 @@ def check_password():
 
 # --- 3. MOTORE AD ALTA PRECISIONE (API + VERTEX AI) ---
 def get_metrics_real(origin, dest):
-    """Interroga Google Maps e valida con Vertex AI (No fallback fissi)"""
+    """Interroga Maps e Vertex AI senza valori di fallback"""
     try:
+        # Google Maps Matrix API
         gmaps = googlemaps.Client(key=st.secrets["MAPS_API_KEY"])
         res = gmaps.directions(origin, dest, mode="driving", departure_time=datetime.now())
         if res:
@@ -51,21 +52,21 @@ def get_metrics_real(origin, dest):
             g_min = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
             dist = leg['distance']['text']
             
-            # Validazione intelligente Vertex AI (Ruolo: Vertex AI User)
+            # Validazione logistica Vertex AI (Project: mimetic-science-479013-f0)
             info = dict(st.secrets["gcp_service_account"])
             creds = service_account.Credentials.from_service_account_info(info)
             vertexai.init(project=info["project_id"], location="us-central1", credentials=creds)
             model = GenerativeModel("gemini-1.5-flash")
-            prompt = (f"NCC Roma: tratta {origin} -> {dest}. Maps stima {g_min} min. "
-                      f"Usa la tua conoscenza del traffico reale (ZTL, varchi aeroporto). "
-                      f"Rispondi SOLO con il numero intero dei minuti.")
+            prompt = (f"Sei un dispatcher NCC a Roma. Tratta {origin} -> {dest}. Maps stima {g_min} min. "
+                      f"Considera ZTL, traffico reale e varchi. Rispondi SOLO con il numero intero dei minuti.")
             ai_res = model.generate_content(prompt)
             final_t = int(''.join(filter(str.isdigit, ai_res.text)))
             return final_t, dist, True
-    except:
-        return 0, "N/D", False # 0 segnala un errore di connessione
+    except Exception as e:
+        st.sidebar.error(f"Errore Connessione: {e}")
+        return None, "N/D", False
 
-# --- 4. LOGICA DISPATCH (SMART POOLING E 10+10 MIN) ---
+# --- 4. LOGICA SMART DISPATCH (10+Tempo+10) ---
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
@@ -73,6 +74,7 @@ def run_dispatch(df_c, df_f):
     bar = st.progress(0); status = st.empty()
     df_c.columns = df_c.columns.str.strip(); df_f.columns = df_f.columns.str.strip()
     
+    # Auto-rilevamento colonne per stabilità
     col_id = next((c for c in df_c.columns if 'ID' in c), df_c.columns[0])
     col_ora = next((c for c in df_c.columns if 'Ora' in c), 'Ora Arrivo')
     col_prel = next((c for c in df_c.columns if 'Prelievo' in c), 'Indirizzo Prelievo')
@@ -95,7 +97,7 @@ def run_dispatch(df_c, df_f):
         cap_max = CAPACITA.get(req, 3)
         assigned = False
         
-        # 1. SMART POOLING
+        # Smart Pooling (Raggruppamento per stessa destinazione e orario)
         potenziali = df_f[(df_f['Tipo Veicolo'].str.capitalize() == req) & (df_f['Last_D'] == r[col_dest]) & (df_f['P_Oggi'] < cap_max)]
         for idx_p, aut_p in potenziali.iterrows():
             last = next(c for c in reversed(res_list) if c['Autista'] == aut_p['Autista'])
@@ -107,13 +109,14 @@ def run_dispatch(df_c, df_f):
                 })
                 df_f.at[idx_p, 'P_Oggi'] += 1; assigned = True; break
 
-        # 2. ASSEGNAZIONE SINGOLA (10+10 MIN)
+        # Assegnazione con logica temporale 10+Viaggio+10
         if not assigned:
             idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == req]
             best_m = None; min_rit = float('inf')
             for idx, aut in idonei.iterrows():
                 dv, _, _ = get_metrics_real(aut['Pos'], r[col_prel])
-                op = aut['DT_D'] + timedelta(minutes=dv + 10) # 10m Accoglienza/Prelievo
+                if dv is None: dv = 30 # Protezione minima solo se API crasha
+                op = aut['DT_D'] + timedelta(minutes=dv + 10) # 10m Accoglienza
                 rit = max(0, (op - r['DT_R']).total_seconds() / 60)
                 if rit <= 2: best_m = (idx, op, dv, rit); break
                 if rit < min_rit: min_rit = rit; best_m = (idx, op, dv, rit)
@@ -121,13 +124,14 @@ def run_dispatch(df_c, df_f):
             if best_m:
                 idx, op, dv, rit = best_m
                 dp, dist, ai_p = get_metrics_real(r[col_prel], r[col_dest])
+                if dp is None: dp = 30
                 partenza = max(r['DT_R'], op)
-                arrivo = partenza + timedelta(minutes=dp + 10) # 10m Scarico/Reset
+                arrivo = partenza + timedelta(minutes=dp + 10) # 10m Scarico
                 res_list.append({
                     'Autista': df_f.at[idx, 'Autista'], 'ID': r[col_id], 'Mezzo': df_f.at[idx, 'ID Veicolo'], 'Veicolo': req,
                     'Da': r[col_prel], 'Partenza': partenza, 'A': r[col_dest], 'Arrivo': arrivo,
                     'Status': "🟢 OK" if rit <= 2 else f"🔴 RITARDO {int(rit)} min",
-                    'M_V': dv, 'M_P': dp, 'Rit': int(rit), 'AI': ai_p, 'Dist': dist
+                    'M_V': dv, 'M_P': dp, 'Prov': aut['Pos'], 'Rit': int(rit), 'AI': ai_p, 'Dist': dist
                 })
                 df_f.at[idx, 'DT_D'] = arrivo; df_f.at[idx, 'Pos'] = r[col_dest]; 
                 df_f.at[idx, 'S_C'] += 1; df_f.at[idx, 'P_Oggi'] = 1; df_f.at[idx, 'Last_D'] = r[col_dest]
@@ -135,15 +139,15 @@ def run_dispatch(df_c, df_f):
     status.empty(); bar.empty()
     return pd.DataFrame(res_list), df_f
 
-# --- 5. INTERFACCIA (RIPRISTINO GRAFICA ORIGINALE) ---
+# --- 5. INTERFACCIA DASHBOARD ---
 if check_password():
     st.sidebar.button("🔓 LOGOUT", on_click=lambda: st.session_state.pop("password_correct"))
     st.markdown('<h1 class="main-title">🚐 EmiTrekAI | Gestione Viaggi</h1>', unsafe_allow_html=True)
     
     if 'risultati' not in st.session_state:
         c1, c2 = st.columns(2)
-        f_p = c1.file_uploader("📋 Prenotazioni (.xlsx)", type=['xlsx'])
-        f_f = c2.file_uploader("🚘 Flotta (.xlsx)", type=['xlsx'])
+        f_p = c1.file_uploader("📋 Carica Prenotazioni (.xlsx)", type=['xlsx'])
+        f_f = c2.file_uploader("🚘 Carica Flotta (.xlsx)", type=['xlsx'])
         if f_p and f_f:
             st.markdown("<br>", unsafe_allow_html=True)
             _, cb, _ = st.columns([1, 1.5, 1])
@@ -170,16 +174,19 @@ if check_password():
         st.divider()
         ca, cc = st.columns(2)
         with ca:
-            st.header("🕵️ Diario di Bordo")
+            st.header("🕵️ Diario di Bordo Autista")
             sel = st.selectbox("Seleziona Autista:", flotta['Autista'].unique())
             for _, r in df[df['Autista'] == sel].iterrows():
                 with st.expander(f"Corsa {r['ID']} - Ore {r['Inizio']}"):
                     if r['Rit'] > 0: st.error(f"⚠️ RITARDO RILEVATO: {r['Rit']} minuti!")
+                    st.write(f"🏢 **Veicolo:** {r['Mezzo']} ({r['Veicolo']})")
                     st.write(f"⏱️ **Tempi:** Accoglienza 10m + Viaggio {r['M_P']}m + Scarico 10m")
                     st.write(f"✅ **Libero alle:** {r['Fine']}")
         with cc:
             st.header("📍 Dettaglio Cliente")
-            sid = st.selectbox("ID Prenotazione:", df['ID'].unique())
+            sid = st.selectbox("Cerca ID Prenotazione:", df['ID'].unique())
             inf = df[df['ID'] == sid].iloc[0]
             st.success(f"👤 **Autista:** {inf['Autista']} | 🏢 **Veicolo:** {inf['Mezzo']}")
+            st.markdown(f"📍 **Partenza:** {inf['Da']} (Ore {inf['Inizio']})")
+            st.markdown(f"🏁 **Arrivo:** {inf['A']} (Ore {inf['Fine']})")
             if st.sidebar.button("🔄 NUOVA ANALISI"): del st.session_state['risultati']; st.rerun()
