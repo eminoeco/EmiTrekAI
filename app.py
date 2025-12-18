@@ -6,7 +6,7 @@ import vertexai
 from vertexai.generative_models import GenerativeModel
 import tempfile, json, os
 
-# --- 1. CONFIGURAZIONE UI E ACCESSO ---
+# --- 1. CONFIGURAZIONE ESTETICA (Ripristino SaaS) ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI | Smart Dispatch", page_icon="🚐")
 
 st.markdown("""
@@ -19,11 +19,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# --- 2. GESTIONE ACCESSO ---
 def check_password():
     if "password_correct" not in st.session_state:
-        st.markdown('<h1 class="main-title">🔒 Accesso Riservato</h1>', unsafe_allow_html=True)
-        u = st.text_input("Username")
-        p = st.text_input("Password", type="password")
+        st.markdown('<h1 class="main-title">🔒 Accesso Riservata</h1>', unsafe_allow_html=True)
+        u = st.text_input("Username", key="u_input")
+        p = st.text_input("Password", type="password", key="p_input")
         if st.button("ENTRA"):
             if u in st.secrets["users"] and p == st.secrets["users"][u]["password"]:
                 st.session_state["password_correct"] = True; st.rerun()
@@ -31,14 +32,14 @@ def check_password():
         return False
     return True
 
-# --- 2. INIZIALIZZAZIONE VERTEX AI (FIX 404 - LOCATION EUROPE) ---
+# --- 3. INIZIALIZZAZIONE VERTEX AI (FIX LOCATION) ---
 if "VERTEX_READY" not in st.session_state:
     try:
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
             json.dump(dict(st.secrets["gcp_service_account"]), f)
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
         
-        # CAMBIO LOCATION A EUROPE-WEST4 PER RISOLVERE IL 404
+        # Usiamo europe-west4 come visto nei tuoi screenshot di successo
         vertexai.init(
             project=st.secrets["gcp_service_account"]["project_id"], 
             location="europe-west4" 
@@ -46,11 +47,11 @@ if "VERTEX_READY" not in st.session_state:
         st.session_state["vertex_model"] = GenerativeModel("gemini-1.5-flash")
         st.session_state["VERTEX_READY"] = True
     except Exception as e:
-        st.error(f"Errore critico Vertex AI: {e}")
+        st.error(f"Errore inizializzazione: {e}")
 
 model = st.session_state.get("vertex_model")
 
-# --- 3. MOTORE DI CALCOLO REALE ---
+# --- 4. MOTORE DI CALCOLO REALE (MAPS + VERTEX) ---
 def get_metrics_real(origin, dest):
     try:
         gmaps = googlemaps.Client(key=st.secrets["MAPS_API_KEY"])
@@ -61,22 +62,20 @@ def get_metrics_real(origin, dest):
         g_min = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
         dist = leg['distance']['text']
         
-        # Interrogazione AI per validazione traffico Roma
-        prompt = f"Dispatcher Roma: tratta {origin}->{dest}. Maps stima {g_min} min. Rispondi solo col numero intero dei minuti reali."
+        # Validazione AI mandatoria
+        prompt = f"Dispatcher Roma: tratta {origin}->{dest}. Maps stima {g_min} min. Rispondi SOLO col numero intero dei minuti."
         ai_res = model.generate_content(prompt)
         final_t = int(''.join(filter(str.isdigit, ai_res.text)))
         return final_t, dist, True
     except:
         return 30, "N/D", False
 
-# --- 4. LOGICA DISPATCH (Pooling + 10+10) ---
-DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0']
-
+# --- 5. LOGICA DISPATCH (10+Tempo+10) ---
 def run_dispatch(df_c, df_f):
     df_c.columns = df_c.columns.str.strip()
     df_f.columns = df_f.columns.str.strip()
     
-    # Rilevamento automatico colonne
+    # Rilevamento automatico colonne per evitare NameError
     c_id = next((c for c in df_c.columns if 'ID' in c.upper()), df_c.columns[0])
     c_ora = next((c for c in df_c.columns if 'ORA' in c.upper()), df_c.columns[1])
     c_prel = next((c for c in df_c.columns if 'PRELIEVO' in c.upper()), df_c.columns[2])
@@ -106,7 +105,7 @@ def run_dispatch(df_c, df_f):
             dv, _, _ = get_metrics_real(f['Pos'], r[c_prel])
             dp, dist, ai_ok = get_metrics_real(r[c_prel], r[c_dest])
 
-            # Logica 10m prelievo + Viaggio + 10m scarico
+            # Calcolo 10m prelievo + Viaggio + 10m scarico
             ready_time = f['DT'] + timedelta(minutes=dv + 10)
             partenza = max(r['DT'], ready_time)
             arrivo = partenza + timedelta(minutes=dp + 10)
@@ -117,7 +116,7 @@ def run_dispatch(df_c, df_f):
                 'Autista': f[f_aut], 'ID': r[c_id], 'Da': r[c_prel], 'A': r[c_dest],
                 'Inizio': partenza.strftime('%H:%M'), 'Fine': arrivo.strftime('%H:%M'),
                 'Status': "🟢 OK" if ritardo <= 2 else f"🔴 RITARDO {int(ritardo)} min",
-                'Ritardo': int(ritardo), 'AI': ai_ok
+                'AI': ai_ok
             })
             df_f.at[idx, 'DT'] = arrivo
             df_f.at[idx, 'Pos'] = r[c_dest]
@@ -126,31 +125,30 @@ def run_dispatch(df_c, df_f):
     bar.empty()
     return pd.DataFrame(results), df_f
 
-# --- 5. INTERFACCIA DASHBOARD ---
+# --- 6. UI DASHBOARD ---
 if check_password():
     st.markdown('<h1 class="main-title">🚐 EmiTrekAI Dispatch</h1>', unsafe_allow_html=True)
     
     if 'results' not in st.session_state:
         c1, c2 = st.columns(2)
-        f_p = c1.file_uploader("Prenotazioni (.xlsx)", type=['xlsx'])
-        f_f = c2.file_uploader("Flotta (.xlsx)", type=['xlsx'])
+        f_p = c1.file_uploader("Carica Prenotazioni (.xlsx)", type=['xlsx'])
+        f_f = c2.file_uploader("Carica Flotta (.xlsx)", type=['xlsx'])
         
-        if f_p and f_f and st.button("🚀 AVVIA OTTIMIZZAZIONE"):
+        if f_p and f_f and st.button("🚀 AVVIA ANALISI"):
             res, fleet = run_dispatch(pd.read_excel(f_p), pd.read_excel(f_f))
             st.session_state['results'], st.session_state['fleet'] = res, fleet
             st.rerun()
     else:
         df, flotta = st.session_state['results'], st.session_state['fleet']
-        colors = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(flotta['Autista'].unique())}
         
-        # Box Flotta
+        st.write("### 📊 Stato Flotta")
         cols = st.columns(len(flotta))
         for i, (_, row) in enumerate(flotta.iterrows()):
             with cols[i]:
-                st.markdown(f'<div style="background-color:{colors[row["Autista"]]}; padding:15px; border-radius:10px; color:white; text-align:center;"><b>{row["Autista"]}</b><br>Servizi: {row["Servizi"]}</div>', unsafe_allow_html=True)
+                st.info(f"**{row['Autista']}**\n\nServizi: {row['Servizi']}")
 
         st.divider()
-        st.dataframe(df[['Autista', 'ID', 'Da', 'Inizio', 'A', 'Fine', 'Status']].style.apply(lambda x: [f"background-color: {colors.get(x.Autista)}; color: white" for _ in x], axis=1), use_container_width=True)
+        st.dataframe(df, use_container_width=True)
         
         if st.button("🔄 NUOVA ANALISI"):
             del st.session_state['results']; st.rerun()
