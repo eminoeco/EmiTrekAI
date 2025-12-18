@@ -38,12 +38,13 @@ def check_password():
 
 # --- 3. MOTORE VERTEX AI & GOOGLE MAPS ---
 def ai_validate_time(origin, dest, g_min):
+    """L'AI supervisiona Google per evitare tempi irrealistici"""
     try:
         info = dict(st.secrets["gcp_service_account"])
         creds = service_account.Credentials.from_service_account_info(info)
         vertexai.init(project=info["project_id"], location="us-central1", credentials=creds)
         model = GenerativeModel("gemini-1.5-flash")
-        prompt = f"NCC Roma: da {origin} a {dest} Google dice {g_min} min. Sii realista, non accettare tempi sotto i 45 min per Ciampino-Termini. Rispondi solo col numero."
+        prompt = f"NCC Roma: da {origin} a {dest} Google dice {g_min} min. Sii realista: no sotto i 45 min per Ciampino-Termini. Rispondi solo col numero."
         response = model.generate_content(prompt)
         return int(''.join(filter(str.isdigit, response.text))), True
     except: return g_min, False
@@ -59,7 +60,7 @@ def get_gmaps_info(origin, destination):
             return final_t, leg['distance']['text'], ai_fix
     except: return 45, "N/D", True
 
-# --- 4. LOGICA SMART DISPATCH (POOLING PER REQUISITO) ---
+# --- 4. LOGICA SMART DISPATCH (10+10 MINUTI TECNICI) ---
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
@@ -79,41 +80,42 @@ def run_dispatch(df_c, df_f):
         cap_max = CAPACITA.get(req, 3)
         assigned = False
         
-        # 1. TENTA ACCORPAMENTO (POOLING) - RISPETTA REQUISITO MEZZO
-        potenziali = df_f[(df_f['Tipo Veicolo'].str.capitalize() == req) & 
-                          (df_f['Last_D'] == r['Destinazione Finale']) & 
-                          (df_f['P_Oggi'] < cap_max)]
+        # 1. SMART POOLING (ACCORPAMENTO STESSO REQUISITO)
+        potenziali = df_f[(df_f['Tipo Veicolo'].str.capitalize() == req) & (df_f['Last_D'] == r['Destinazione Finale']) & (df_f['P_Oggi'] < cap_max)]
         
         for idx_p, aut_p in potenziali.iterrows():
             last = next(c for c in reversed(res_list) if c['Autista'] == aut_p['Autista'])
-            if abs((last['Partenza'] - r['DT_R']).total_seconds()) <= 900:
+            if abs((last['Partenza'] - r['DT_R']).total_seconds()) <= 600:
                 res_list.append({
-                    'Autista': aut_p['Autista'], 'ID': r['ID Prenotazione'], 'Mezzo': aut_p['ID Veicolo'],
+                    'Autista': aut_p['Autista'], 'ID': r['ID Prenotazione'], 'Mezzo': aut_p['ID Veicolo'], 'Veicolo': req,
                     'Da': r['Indirizzo Prelievo'], 'Partenza': last['Partenza'], 'A': r['Destinazione Finale'], 
                     'Arrivo': last['Arrivo'], 'Status': f"💎 ACCORPATO ({req})", 'Rit': 0, 'AI': True, 'Prov': "Pooling"
                 })
                 df_f.at[idx_p, 'P_Oggi'] += 1; assigned = True; break
 
-        # 2. SE NON ACCORPABILE, ASSEGNA NUOVO
+        # 2. ASSEGNAZIONE SINGOLA CON 10+10 MINUTI
         if not assigned:
             idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == req]
             best_m = None; min_rit = float('inf')
             for idx, aut in idonei.iterrows():
                 dv = 0 if aut['S_C'] == 0 else get_gmaps_info(aut['Pos'], r['Indirizzo Prelievo'])[0]
-                op = aut['DT_D'] + timedelta(minutes=dv + 15)
+                # Ora pronto: Disponibilità + Viaggio a vuoto + 10m accoglienza
+                op = aut['DT_D'] + timedelta(minutes=dv + 10)
                 rit = max(0, (op - r['DT_R']).total_seconds() / 60)
                 if rit <= 2: best_m = (idx, op, dv, rit); break
                 if rit < min_rit: min_rit = rit; best_m = (idx, op, dv, rit)
 
             if best_m:
                 idx, op, dv, rit = best_m
-                dp, _, ai_p = get_gmaps_info(r['Indirizzo Prelievo'], r['Destinazione Finale'])
-                partenza = max(r['DT_R'], op); arrivo = partenza + timedelta(minutes=dp + 15)
+                dp, dist, ai_p = get_gmaps_info(r['Indirizzo Prelievo'], r['Destinazione Finale'])
+                partenza = max(r['DT_R'], op)
+                # Arrivo: Partenza + Viaggio + 10m scarico
+                arrivo = partenza + timedelta(minutes=dp + 10) 
                 res_list.append({
-                    'Autista': df_f.at[idx, 'Autista'], 'ID': r['ID Prenotazione'], 'Mezzo': df_f.at[idx, 'ID Veicolo'],
+                    'Autista': df_f.at[idx, 'Autista'], 'ID': r['ID Prenotazione'], 'Mezzo': df_f.at[idx, 'ID Veicolo'], 'Veicolo': req,
                     'Da': r['Indirizzo Prelievo'], 'Partenza': partenza, 'A': r['Destinazione Finale'], 'Arrivo': arrivo,
                     'Status': "🟢 OK" if rit <= 2 else f"🔴 RITARDO {int(rit)} min",
-                    'M_V': dv, 'M_P': dp, 'Prov': aut['Pos'], 'Rit': int(rit), 'AI': ai_p
+                    'M_V': dv, 'M_P': dp, 'Prov': aut['Pos'], 'Rit': int(rit), 'AI': ai_p, 'Distanza': dist
                 })
                 df_f.at[idx, 'DT_D'] = arrivo; df_f.at[idx, 'Pos'] = r['Destinazione Finale']; 
                 df_f.at[idx, 'S_C'] += 1; df_f.at[idx, 'P_Oggi'] = 1; df_f.at[idx, 'Last_D'] = r['Destinazione Finale']
@@ -139,17 +141,23 @@ if check_password():
         st.divider()
         ca, cc = st.columns(2)
         with ca:
-            st.header("🕵️ Diario Autisti")
+            st.header("🕵️ Diario di Bordo Autista")
             sel = st.selectbox("Seleziona Autista:", flotta['Autista'].unique())
             for _, r in df[df['Autista'] == sel].iterrows():
                 with st.expander(f"Corsa {r['ID']} - Ore {r['Inizio']}"):
                     if r['Rit'] > 0: st.error(f"⚠️ RITARDO RILEVATO: {r['Rit']} minuti!")
-                    st.write(f"📍 Destinazione: **{r['A']}**")
-                    st.write(f"⏱️ Tempo viaggio AI: **{r['M_P']} min**")
-                    st.write(f"✅ Libero alle: **{r['Fine']}**")
+                    st.write(f"🏢 **Veicolo:** {r['Mezzo']} ({r['Veicolo']})")
+                    st.write(f"📍 **Provenienza:** {r['Prov']}")
+                    st.write(f"⏱️ **Accoglienza:** 10 min | **Spostamento:** {r['M_V']} min")
+                    st.write(f"⏱️ **Viaggio Cliente:** {r['M_P']} min | **Scarico:** 10 min")
+                    st.write(f"✅ **Termine Servizio:** {r['Fine']}")
         with cc:
             st.header("📍 Dettaglio Cliente")
             sid = st.selectbox("Cerca ID Prenotazione:", df['ID'].unique())
             inf = df[df['ID'] == sid].iloc[0]
             st.success(f"👤 **Autista:** {inf['Autista']} | 🏢 **Veicolo:** {inf['Mezzo']}")
+            st.markdown(f"📍 **Partenza:** {inf['Da']} (Ore {inf['Inizio']})")
+            st.markdown(f"🏁 **Destinazione:** {inf['A']} (Ore {inf['Fine']})")
+            st.markdown(f"🛣️ **Distanza Stimata:** {inf.get('Distanza', 'N/D')}")
+            st.markdown(f"ℹ️ **Status:** {inf['Status']}")
             if st.sidebar.button("🔄 NUOVA ANALISI"): del st.session_state['risultati']; st.rerun()
