@@ -5,3 +5,4 @@ python-dotenv
 folium
 streamlit-folium
 googlemaps
+google-cloud-aiplatform
