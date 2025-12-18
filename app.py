@@ -5,7 +5,6 @@ import googlemaps
 from google.oauth2 import service_account
 import vertexai
 from vertexai.generative_models import GenerativeModel
-import time
 
 # --- 1. CONFIGURAZIONE ESTETICA ---
 st.set_page_config(layout="wide", page_title="EmiTrekAI | SaaS Smart Dispatch", page_icon="🚐")
@@ -19,9 +18,7 @@ st.markdown("""
         transition: 0.3s; border: none; box-shadow: 0px 4px 15px rgba(255, 75, 75, 0.4);
         display: block; margin: 0 auto;
     }
-    .stButton > button:hover { background-color: #FF1A1A; transform: scale(1.02); }
     .main-title { color: #1E1E1E; font-size: 45px; font-weight: 800; text-align: center; }
-    .sub-title { color: #666; font-size: 18px; text-align: center; margin-bottom: 30px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -64,42 +61,44 @@ def get_gmaps_info(origin, destination):
             return final_t, leg['distance']['text'], ai_fix
     except: return 45, "N/D", True
 
-# --- 4. LOGICA SMART DISPATCH (10+10 MINUTI) ---
+# --- 4. LOGICA SMART DISPATCH (FIX KEYERROR) ---
 DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0', '#00BCD4', '#FF5722']
 CAPACITA = {'Berlina': 3, 'Suv': 3, 'Minivan': 7}
 
 def run_dispatch(df_c, df_f):
-    # Simulazione caricamento per barra
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
+    progress_bar = st.progress(0); status_text = st.empty()
     df_c.columns = df_c.columns.str.strip(); df_f.columns = df_f.columns.str.strip()
-    def pt(t): return datetime.combine(datetime.today(), t) if not isinstance(t, str) else datetime.strptime(t.replace('.', ':'), '%H:%M')
     
-    df_c['DT_R'] = df_c['Ora Arrivo'].apply(pt)
+    # Rilevamento automatico nomi colonne per evitare KeyError
+    col_id = next((c for c in df_c.columns if 'ID' in c), 'ID')
+    col_ora = next((c for c in df_c.columns if 'Ora' in c), 'Ora Arrivo')
+    col_dest = next((c for c in df_c.columns if 'Destinazione' in c), 'Destinazione Finale')
+    col_prel = next((c for c in df_c.columns if 'Prelievo' in c), 'Indirizzo Prelievo')
+    col_tipo = next((c for c in df_c.columns if 'Tipo' in c), 'Tipo Veicolo Richiesto')
+    
+    def pt(t): return datetime.combine(datetime.today(), t) if not isinstance(t, str) else datetime.strptime(t.replace('.', ':'), '%H:%M')
+    df_c['DT_R'] = df_c[col_ora].apply(pt)
     df_f['DT_D'] = df_f['Disponibile Da (hh:mm)'].apply(pt)
     df_f['Pos'] = "BASE"; df_f['S_C'] = 0; df_f['P_Oggi'] = 0; df_f['Last_D'] = ""
     
     res_list = []
-    df_c = df_c.sort_values(by=['DT_R', 'Destinazione Finale'])
-    total_steps = len(df_c)
+    df_c = df_c.sort_values(by=['DT_R', col_dest])
+    total = len(df_c)
 
     for i, (_, r) in enumerate(df_c.iterrows()):
-        status_text.text(f"Analisi Corsa {r['ID']} con Vertex AI...")
-        progress_bar.progress((i + 1) / total_steps)
+        status_text.text(f"Analisi Corsa {r[col_id]} con Vertex AI...")
+        progress_bar.progress((i + 1) / total)
         
-        req = r['Tipo Veicolo Richiesto'].strip().capitalize()
-        cap_max = CAPACITA.get(req, 3)
-        assigned = False
+        req = r[col_tipo].strip().capitalize(); cap_max = CAPACITA.get(req, 3); assigned = False
         
         # Smart Pooling
-        potenziali = df_f[(df_f['Tipo Veicolo'].str.capitalize() == req) & (df_f['Last_D'] == r['Destinazione Finale']) & (df_f['P_Oggi'] < cap_max)]
+        potenziali = df_f[(df_f['Tipo Veicolo'].str.capitalize() == req) & (df_f['Last_D'] == r[col_dest]) & (df_f['P_Oggi'] < cap_max)]
         for idx_p, aut_p in potenziali.iterrows():
             last = next(c for c in reversed(res_list) if c['Autista'] == aut_p['Autista'])
             if abs((last['Partenza'] - r['DT_R']).total_seconds()) <= 600:
                 res_list.append({
-                    'Autista': aut_p['Autista'], 'ID': r['ID Prenotazione'], 'Mezzo': aut_p['ID Veicolo'], 'Veicolo': req,
-                    'Da': r['Indirizzo Prelievo'], 'Partenza': last['Partenza'], 'A': r['Destinazione Finale'], 
+                    'Autista': aut_p['Autista'], 'ID': r[col_id], 'Mezzo': aut_p['ID Veicolo'], 'Veicolo': req,
+                    'Da': r[col_prel], 'Partenza': last['Partenza'], 'A': r[col_dest], 
                     'Arrivo': last['Arrivo'], 'Status': f"💎 ACCORPATO ({req})", 'Rit': 0, 'AI': True, 'Prov': "Pooling"
                 })
                 df_f.at[idx_p, 'P_Oggi'] += 1; assigned = True; break
@@ -108,7 +107,7 @@ def run_dispatch(df_c, df_f):
             idonei = df_f[df_f['Tipo Veicolo'].str.capitalize() == req]
             best_m = None; min_rit = float('inf')
             for idx, aut in idonei.iterrows():
-                dv = 0 if aut['S_C'] == 0 else get_gmaps_info(aut['Pos'], r['Indirizzo Prelievo'])[0]
+                dv = 0 if aut['S_C'] == 0 else get_gmaps_info(aut['Pos'], r[col_prel])[0]
                 op = aut['DT_D'] + timedelta(minutes=dv + 10) # Accoglienza
                 rit = max(0, (op - r['DT_R']).total_seconds() / 60)
                 if rit <= 2: best_m = (idx, op, dv, rit); break
@@ -116,31 +115,27 @@ def run_dispatch(df_c, df_f):
 
             if best_m:
                 idx, op, dv, rit = best_m
-                dp, dist, ai_p = get_gmaps_info(r['Indirizzo Prelievo'], r['Destinazione Finale'])
-                partenza = max(r['DT_R'], op)
-                arrivo = partenza + timedelta(minutes=dp + 10) # Scarico
+                dp, dist, ai_p = get_gmaps_info(r[col_prel], r[col_dest])
+                partenza = max(r['DT_R'], op); arrivo = partenza + timedelta(minutes=dp + 10) # Scarico
                 res_list.append({
-                    'Autista': df_f.at[idx, 'Autista'], 'ID': r['ID Prenotazione'], 'Mezzo': df_f.at[idx, 'ID Veicolo'], 'Veicolo': req,
-                    'Da': r['Indirizzo Prelievo'], 'Partenza': partenza, 'A': r['Destinazione Finale'], 'Arrivo': arrivo,
+                    'Autista': df_f.at[idx, 'Autista'], 'ID': r[col_id], 'Mezzo': df_f.at[idx, 'ID Veicolo'], 'Veicolo': req,
+                    'Da': r[col_prel], 'Partenza': partenza, 'A': r[col_dest], 'Arrivo': arrivo,
                     'Status': "🟢 OK" if rit <= 2 else f"🔴 RITARDO {int(rit)} min",
                     'M_V': dv, 'M_P': dp, 'Prov': aut['Pos'], 'Rit': int(rit), 'AI': ai_p, 'Distanza': dist
                 })
-                df_f.at[idx, 'DT_D'] = arrivo; df_f.at[idx, 'Pos'] = r['Destinazione Finale']; 
-                df_f.at[idx, 'S_C'] += 1; df_f.at[idx, 'P_Oggi'] = 1; df_f.at[idx, 'Last_D'] = r['Destinazione Finale']
+                df_f.at[idx, 'DT_D'] = arrivo; df_f.at[idx, 'Pos'] = r[col_dest]; 
+                df_f.at[idx, 'S_C'] += 1; df_f.at[idx, 'P_Oggi'] = 1; df_f.at[idx, 'Last_D'] = r[col_dest]
     
-    status_text.empty()
-    progress_bar.empty()
+    status_text.empty(); progress_bar.empty()
     return pd.DataFrame(res_list), df_f
 
-# --- 5. INTERFACCIA OPERATIVA ---
+# --- 5. INTERFACCIA ---
 if check_password():
     st.sidebar.button("🔓 LOGOUT", on_click=lambda: st.session_state.pop("password_correct"))
     st.markdown('<h1 class="main-title">🚐 EmiTrekAI | Gestione Viaggi</h1>', unsafe_allow_html=True)
-    
     if 'risultati' not in st.session_state:
         c1, c2 = st.columns(2)
-        with c1: f_p = st.file_uploader("📋 Prenotazioni (.xlsx)", type=['xlsx'])
-        with c2: f_f = st.file_uploader("🚘 Flotta (.xlsx)", type=['xlsx'])
+        f_p = c1.file_uploader("Prenotazioni", type=['xlsx']); f_f = c2.file_uploader("Flotta", type=['xlsx'])
         if f_p and f_f:
             st.markdown("<br>", unsafe_allow_html=True)
             _, cb, _ = st.columns([1, 1.5, 1])
@@ -152,7 +147,6 @@ if check_password():
         df, flotta = st.session_state['risultati'], st.session_state['f_a']
         colors = {d: DRIVER_COLORS[i % len(DRIVER_COLORS)] for i, d in enumerate(flotta['Autista'].unique())}
         
-        # BOX COLORATE
         st.write("### 📊 Situazione Mezzi")
         stat_cols = st.columns(len(flotta))
         for i, (_, aut_row) in enumerate(flotta.iterrows()):
