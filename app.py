@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import googlemaps
 
 # --- 1. CONFIGURAZIONE ESTETICA ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI | Dispatcher", page_icon="🚐")
+st.set_page_config(layout="wide", page_title="EmiTrekAI | Smart Dispatch", page_icon="🚐")
 
 st.markdown("""
     <style>
@@ -25,9 +25,9 @@ def get_maps_data(origin, dest):
             return minuti, leg['distance']['text']
     except Exception as e:
         st.sidebar.error(f"Errore Maps API: {e}")
-    return 35, "N/D"
+    return 40, "N/D"
 
-# --- 3. LOGICA DISPATCH ---
+# --- 3. LOGICA DISPATCH + POOLING REALE ---
 def run_dispatch(df_c, df_f):
     df_c.columns = df_c.columns.str.strip(); df_f.columns = df_f.columns.str.strip()
     
@@ -44,58 +44,72 @@ def run_dispatch(df_c, df_f):
         try: return datetime.combine(datetime.today(), datetime.strptime(str(t).replace('.', ':'), '%H:%M').time())
         except: return datetime.now()
 
-    df_c['DT_TARGET'] = df_c[c_ora].apply(parse_t)
-    df_f['DT_AVAIL'] = df_f[f_disp].apply(parse_t)
-    df_f['Pos'] = "BASE"; df_f['Servizi'] = 0
+    df_c['DT_T'] = df_c[c_ora].apply(parse_t)
+    df_f['DT_A'] = df_f[f_disp].apply(parse_t)
+    df_f['Pos'] = "BASE"; df_f['Servizi'] = 0; df_f['Occupazione'] = 0
     
     results = []
     DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0']
 
-    for i, (_, r) in enumerate(df_c.sort_values('DT_TARGET').iterrows()):
+    # Ordiniamo per orario per ottimizzare il pooling
+    for i, (_, r) in enumerate(df_c.sort_values('DT_T').iterrows()):
+        assigned = False
+        
+        # PROVA POOLING (Cerca un autista che sta già andando nella stessa destinazione)
         for idx, f in df_f.iterrows():
             if str(f['Tipo Veicolo']).upper() != str(r[c_tipo]).upper(): continue
             
-            # Smart Pooling Logica (Se già sul posto)
-            is_pooling = (f['Pos'] == r[c_prel])
-            
-            t_vuoto, _ = (0, "") if is_pooling else get_maps_data(f['Pos'], r[c_prel])
-            t_pieno, dist = get_maps_data(r[c_prel], r[c_dest])
+            # Se l'autista ha appena finito o sta andando nella stessa destinazione entro 15 min
+            if f['Pos'] == r[c_dest] and abs((f['DT_A'] - r['DT_T']).total_seconds()/60) < 20:
+                is_ritardo = int(max(0, (f['DT_A'] - r['DT_T']).total_seconds() / 60))
+                results.append({
+                    'Autista': f[f_aut], 'Color': DRIVER_COLORS[idx % len(DRIVER_COLORS)],
+                    'ID': r[c_id], 'Da': r[c_prel], 'A': r[c_dest],
+                    'Inizio': r['DT_T'].strftime('%H:%M'), 'Fine': f['DT_A'].strftime('%H:%M'),
+                    'Status': "🟢 OK" if is_ritardo <= 5 else f"🔴 RITARDO {is_ritardo} min",
+                    'Note': "💎 POOLING (Insieme)"
+                })
+                assigned = True; break
 
-            # Calcolo 10+Tempo+10
-            ora_pronto = f['DT_AVAIL'] + timedelta(minutes=t_vuoto + 10)
-            inizio = max(r['DT_TARGET'], ora_pronto)
-            fine = inizio + timedelta(minutes=t_pieno + 10)
-            
-            rit = int(max(0, (ora_pronto - r['DT_TARGET']).total_seconds() / 60))
+        # ASSEGNAZIONE NORMALE se il pooling non è possibile
+        if not assigned:
+            for idx, f in df_f.iterrows():
+                if str(f['Tipo Veicolo']).upper() != str(r[c_tipo]).upper(): continue
+                
+                t_vuoto, _ = get_maps_data(f['Pos'], r[c_prel])
+                t_pieno, _ = get_maps_data(r[c_prel], r[c_dest])
 
-            results.append({
-                'Autista': f[f_aut], 
-                'Color': DRIVER_COLORS[idx % len(DRIVER_COLORS)],
-                'ID': r[c_id], 'Da': r[c_prel], 'A': r[c_dest],
-                'Inizio': inizio.strftime('%H:%M'), 'Fine': fine.strftime('%H:%M'),
-                'Status': "🟢 OK" if rit <= 2 else f"🔴 RITARDO {rit} min",
-                'Note': "💎 POOLING" if is_pooling else ""
-            })
-            df_f.at[idx, 'DT_AVAIL'] = fine
-            df_f.at[idx, 'Pos'] = r[c_dest]; df_f.at[idx, 'Servizi'] += 1
-            break
+                ora_pronto = f['DT_A'] + timedelta(minutes=t_vuoto + 10)
+                inizio = max(r['DT_T'], ora_pronto)
+                fine = inizio + timedelta(minutes=t_pieno + 10)
+                
+                rit = int(max(0, (ora_pronto - r['DT_T']).total_seconds() / 60))
+
+                results.append({
+                    'Autista': f[f_aut], 'Color': DRIVER_COLORS[idx % len(DRIVER_COLORS)],
+                    'ID': r[c_id], 'Da': r[c_prel], 'A': r[c_dest],
+                    'Inizio': inizio.strftime('%H:%M'), 'Fine': fine.strftime('%H:%M'),
+                    'Status': "🟢 OK" if rit <= 5 else f"🔴 RITARDO {rit} min",
+                    'Note': ""
+                })
+                df_f.at[idx, 'DT_A'] = fine
+                df_f.at[idx, 'Pos'] = r[c_dest]; df_f.at[idx, 'Servizi'] += 1
+                assigned = True; break
             
     return pd.DataFrame(results), df_f
 
 # --- 4. UI ---
-st.markdown('<h1 class="main-title">🚐 EmiTrekAI | Dispatcher</h1>', unsafe_allow_html=True)
+st.markdown('<h1 class="main-title">🚐 EmiTrekAI | Smart Dispatch</h1>', unsafe_allow_html=True)
 
 if 'res' not in st.session_state:
     c1, c2 = st.columns(2)
-    u1, u2 = c1.file_uploader("Prenotazioni (.xlsx)"), c2.file_uploader("Flotta (.xlsx)")
+    u1, u2 = c1.file_uploader("Prenotazioni"), c2.file_uploader("Flotta")
     if u1 and u2 and st.button("🚀 ELABORA PIANO"):
         res, fleet = run_dispatch(pd.read_excel(u1), pd.read_excel(u2))
         st.session_state['res'], st.session_state['fleet'] = res, fleet
         st.rerun()
 else:
     df, flotta = st.session_state['res'], st.session_state['fleet']
-    
-    # Fix NameError definendo colonna autista qui
     col_f_aut = next((c for c in flotta.columns if 'AUTISTA' in c.upper()), flotta.columns[0])
     
     st.write("### 🚘 Stato Autisti")
