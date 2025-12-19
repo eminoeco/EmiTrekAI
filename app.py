@@ -1,46 +1,35 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta, time as dt_time
+from datetime import datetime, timedelta
 import googlemaps
-import vertexai
-from vertexai.generative_models import GenerativeModel
-import tempfile, json, os
 
-# --- 1. INIZIALIZZAZIONE VERTEX AI (EUROPE-WEST4) ---
-if "VERTEX_READY" not in st.session_state:
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as f:
-            json.dump(dict(st.secrets["gcp_service_account"]), f)
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = f.name
-        vertexai.init(project=st.secrets["gcp_service_account"]["project_id"], location="europe-west4")
-        st.session_state["vertex_model"] = GenerativeModel("gemini-1.5-flash")
-        st.session_state["VERTEX_READY"] = True
-    except Exception as e:
-        st.error(f"Errore Vertex AI: {e}")
+# --- 1. CONFIGURAZIONE ESTETICA ---
+st.set_page_config(layout="wide", page_title="EmiTrekAI | Maps Dispatch", page_icon="🚐")
 
-model = st.session_state.get("vertex_model")
+st.markdown("""
+    <style>
+    .stButton > button { background-color: #FF4B4B; color: white; border-radius: 20px; font-weight: bold; width: 100%; height: 3.5em; }
+    .driver-box { padding: 15px; border-radius: 12px; text-align: center; color: white; margin-bottom: 10px; font-size: 14px; }
+    </style>
+""", unsafe_allow_html=True)
 
-# --- 2. GESTIONE TEMPI REALI ---
-def get_metrics_real(origin, dest):
+# --- 2. MOTORE GOOGLE MAPS (Senza Vertex AI) ---
+def get_maps_data(origin, dest):
     try:
         gmaps = googlemaps.Client(key=st.secrets["MAPS_API_KEY"])
         res = gmaps.directions(origin, dest, mode="driving", departure_time=datetime.now())
-        if not res: return 30, "N/D"
-        
-        g_min = int(res[0]['legs'][0].get('duration_in_traffic', res[0]['legs'][0]['duration'])['value'] / 60)
-        dist = res[0]['legs'][0]['distance']['text']
-        
-        prompt = f"Dispatcher Roma: tratta {origin}->{dest}. Maps dice {g_min} min. Dimmi solo il numero dei minuti reali."
-        ai_res = model.generate_content(prompt)
-        final_t = int(''.join(filter(str.isdigit, ai_res.text)))
-        return final_t, dist
-    except:
-        return 35, "Stima"
+        if res:
+            leg = res[0]['legs'][0]
+            # Usiamo la durata nel traffico se disponibile, altrimenti quella normale
+            minuti = int(leg.get('duration_in_traffic', leg['duration'])['value'] / 60)
+            return minuti, leg['distance']['text']
+    except Exception as e:
+        st.sidebar.error(f"Errore Maps: {e}")
+    return 40, "N/D" # Fallback se l'API fallisce
 
 # --- 3. LOGICA DISPATCH + POOLING ---
 def run_dispatch(df_c, df_f):
-    df_c.columns = df_c.columns.str.strip()
-    df_f.columns = df_f.columns.str.strip()
+    df_c.columns = df_c.columns.str.strip(); df_f.columns = df_f.columns.str.strip()
     
     # Rilevamento automatico colonne
     c_ora = next((c for c in df_c.columns if 'ORA' in c.upper()), df_c.columns[1])
@@ -51,54 +40,67 @@ def run_dispatch(df_c, df_f):
     f_disp = next((c for c in df_f.columns if 'DISPONIBILE' in c.upper()), df_f.columns[2])
 
     def parse_t(t):
-        if isinstance(t, (datetime, pd.Timestamp)): return t
         try: return datetime.combine(datetime.today(), datetime.strptime(str(t).replace('.', ':'), '%H:%M').time())
         except: return datetime.now()
 
-    df_c['DT_T'] = df_c[c_ora].apply(parse_t)
-    df_f['DT_A'] = df_f[f_disp].apply(parse_t)
-    df_f['Pos'] = "BASE"
+    df_c['DT_TARGET'] = df_c[c_ora].apply(parse_t)
+    df_f['DT_AVAIL'] = df_f[f_disp].apply(parse_t)
+    df_f['Pos'] = "BASE"; df_f['Servizi'] = 0
     
     results = []
-    bar = st.progress(0)
-    
-    for i, (_, r) in enumerate(df_c.iterrows()):
-        bar.progress((i + 1) / len(df_c))
+    DRIVER_COLORS = ['#4CAF50', '#2196F3', '#FFC107', '#E91E63', '#9C27B0']
+
+    for i, (_, r) in enumerate(df_c.sort_values('DT_TARGET').iterrows()):
         for idx, f in df_f.iterrows():
             if str(f['Tipo Veicolo']).upper() != str(r[c_tipo]).upper(): continue
             
-            # Controllo Pooling (Se l'autista è già sul posto)
-            is_pooling = f['Pos'] == r[c_prel]
+            # Smart Pooling Logica
+            is_pooling = (f['Pos'] == r[c_prel]) and (abs((f['DT_AVAIL'] - r['DT_TARGET']).total_seconds()/60) < 15)
             
-            t_vuoto, _ = (0, "") if is_pooling else get_metrics_real(f['Pos'], r[c_prel])
-            t_pieno, dist = get_metrics_real(r[c_prel], r[c_dest])
+            t_vuoto, _ = (0, "") if is_pooling else get_maps_data(f['Pos'], r[c_prel])
+            t_viaggio, dist = get_maps_data(r[c_prel], r[c_dest])
 
-            # 10m Prelievo + Viaggio + 10m Scarico
-            ready_customer = f['DT_A'] + timedelta(minutes=t_vuoto + 10)
-            start_run = max(r['DT_T'], ready_customer)
-            end_run = start_run + timedelta(minutes=t_pieno + 10)
+            # Calcolo 10+Tempo+10
+            ora_pronto = f['DT_AVAIL'] + timedelta(minutes=t_vuoto + 10)
+            inizio = max(r['DT_TARGET'], ora_pronto)
+            fine = inizio + timedelta(minutes=t_viaggio + 10)
             
-            rit = int(max(0, (ready_customer - r['DT_T']).total_seconds() / 60))
+            rit = int(max(0, (ora_pronto - r['DT_TARGET']).total_seconds() / 60))
 
             results.append({
-                'Autista': f[f_aut], 'ID': r[next(c for c in df_c.columns if 'ID' in c.upper())],
+                'Autista': f[f_aut], 'Color': DRIVER_COLORS[idx % len(DRIVER_COLORS)],
+                'ID': r[next(c for c in df_c.columns if 'ID' in c.upper())],
                 'Da': r[c_prel], 'A': r[c_dest],
-                'Inizio': start_run.strftime('%H:%M'), 'Fine': end_run.strftime('%H:%M'),
+                'Inizio': inizio.strftime('%H:%M'), 'Fine': fine.strftime('%H:%M'),
                 'Status': "🟢 OK" if rit <= 2 else f"🔴 RITARDO {rit} min",
-                'Note': "POOLING" if is_pooling else ""
+                'Distanza': dist, 'Note': "💎 POOLING" if is_pooling else ""
             })
-            df_f.at[idx, 'DT_A'] = end_run
+            df_f.at[idx, 'DT_AVAIL'] = fine
             df_f.at[idx, 'Pos'] = r[c_dest]
+            df_f.at[idx, 'Servizi'] += 1
             break
             
-    bar.empty()
-    return pd.DataFrame(results)
+    return pd.DataFrame(results), df_f
 
 # --- 4. UI ---
-st.title("🚐 EmiTrekAI | Smart Dispatch")
-u1 = st.file_uploader("Prenotazioni")
-u2 = st.file_uploader("Flotta")
+st.title("🚐 EmiTrekAI | Maps Dispatcher")
 
-if u1 and u2 and st.button("🚀 ELABORA"):
-    df_res = run_dispatch(pd.read_excel(u1), pd.read_excel(u2))
-    st.dataframe(df_res, use_container_width=True)
+if 'res' not in st.session_state:
+    u1 = st.file_uploader("📂 Carica Prenotazioni (.xlsx)")
+    u2 = st.file_uploader("📂 Carica Flotta (.xlsx)")
+    if u1 and u2 and st.button("🚀 GENERA PIANO"):
+        res, fleet = run_dispatch(pd.read_excel(u1), pd.read_excel(u2))
+        st.session_state['res'], st.session_state['fleet'] = res, fleet
+        st.rerun()
+else:
+    df, flotta = st.session_state['res'], st.session_state['fleet']
+    cols = st.columns(len(flotta))
+    for i, (_, row) in enumerate(flotta.iterrows()):
+        color = df[df['Autista'] == row['Autista']]['Color'].iloc[0] if row['Autista'] in df['Autista'].values else "gray"
+        cols[i].markdown(f'<div class="driver-box" style="background-color:{color};"><b>{row["Autista"]}</b><br>Servizi: {row["Servizi"]}</div>', unsafe_allow_html=True)
+
+    st.divider()
+    st.dataframe(df[['Autista', 'ID', 'Da', 'Inizio', 'A', 'Fine', 'Status', 'Note']].style.apply(lambda x: [f"background-color: {x.Color}; color: white" for _ in x], axis=1), use_container_width=True)
+    
+    if st.button("🔄 RESET"):
+        del st.session_state['res']; st.rerun()
