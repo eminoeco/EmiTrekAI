@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import googlemaps
 
 # --- 1. CONFIGURAZIONE ESTETICA ---
-st.set_page_config(layout="wide", page_title="EmiTrekAI | Maps Dispatcher", page_icon="🚐")
+st.set_page_config(layout="wide", page_title="EmiTrekAI | Dispatcher", page_icon="🚐")
 
 st.markdown("""
     <style>
@@ -94,11 +94,16 @@ if 'res' not in st.session_state:
         st.rerun()
 else:
     df, flotta = st.session_state['res'], st.session_state['fleet']
+    
+    # Fix NameError definendo colonna autista qui
+    col_f_aut = next((c for c in flotta.columns if 'AUTISTA' in c.upper()), flotta.columns[0])
+    
     st.write("### 🚘 Stato Autisti")
     cols = st.columns(len(flotta))
     for i, (_, row) in enumerate(flotta.iterrows()):
-        color = df[df['Autista'] == row[f_aut]]['Color'].iloc[0] if row[f_aut] in df['Autista'].values else "gray"
-        cols[i].markdown(f'<div class="driver-box" style="background-color:{color};">{row[f_aut]}<br>Servizi: {row["Servizi"]}</div>', unsafe_allow_html=True)
+        aut_name = row[col_f_aut]
+        color = df[df['Autista'] == aut_name]['Color'].iloc[0] if aut_name in df['Autista'].values else "gray"
+        cols[i].markdown(f'<div class="driver-box" style="background-color:{color};">{aut_name}<br>Servizi: {row["Servizi"]}</div>', unsafe_allow_html=True)
 
     st.divider()
     view_cols = ['Autista', 'ID', 'Da', 'Inizio', 'A', 'Fine', 'Status', 'Note']
